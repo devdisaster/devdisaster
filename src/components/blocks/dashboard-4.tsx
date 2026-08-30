@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
@@ -12,14 +12,10 @@ const cx = (...c: (string | false | null | undefined)[]) =>
 type IncidentWithSession = Doc<"incidents"> & {
   session: Doc<"sessions"> | null;
 };
-type ClusterWithSession = Doc<"clusters"> & {
-  session: Doc<"sessions"> | null;
-};
 type Overview = {
   product: Doc<"products">;
   integrations: Omit<Doc<"integrations">, "cachedResponse">[];
   incidents: IncidentWithSession[];
-  clusters: ClusterWithSession[];
   sessions: Doc<"sessions">[];
   events: Doc<"events">[];
 } | null;
@@ -74,7 +70,7 @@ const cardTitle = "text-sm font-medium text-neutral-900 dark:text-neutral-100";
 const countBadge =
   "inline-flex h-5 shrink-0 items-center rounded-[var(--rb-r-xs,4px)] bg-neutral-200/70 px-1.5 text-[11px] font-medium tabular-nums text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400";
 const buttonClass =
-  "inline-flex h-8 cursor-pointer items-center gap-2 rounded-[var(--rb-r-md,8px)] border border-neutral-200 bg-white px-3 text-[13px] font-medium text-neutral-900 transition-colors hover:border-neutral-300 hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:border-neutral-700 dark:hover:bg-neutral-800";
+  "inline-flex h-9 cursor-pointer items-center gap-2 rounded-[var(--rb-r-md,8px)] border border-neutral-200 bg-white px-4 text-[13px] font-medium text-neutral-900 transition-colors hover:border-neutral-300 hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:border-neutral-700 dark:hover:bg-neutral-800";
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -193,31 +189,18 @@ function IncidentTimeline({ incidentId }: { incidentId: Id<"incidents"> }) {
 
 export default function Dashboard4() {
   const overview: Overview | undefined = useQuery(api.dashboard.overview);
-  const resetV1 = useMutation(api.vendor.resetV1);
-  const upgradeV2 = useMutation(api.vendor.upgradeV2);
-  const runMonitorNow = useAction(api.demo.runMonitorNow);
-  const runIntegration = useAction(api.demo.runIntegration);
-  const seedComplaints = useMutation(api.seed.demoComplaints);
-  const forceThreshold = useMutation(api.threshold.forceThreshold);
   const resetDemo = useMutation(api.demo.resetDemo);
 
-  const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [expandedIncident, setExpandedIncident] =
     useState<Id<"incidents"> | null>(null);
 
-  const runControl = async (name: string, task: () => Promise<unknown>) => {
-    setBusy(name);
-    setNotice(null);
+  const handleReset = async () => {
+    setBusy(true);
     try {
-      const result = await task();
-      if (result && typeof result === "object" && "message" in result) {
-        setNotice(String(result.message));
-      }
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "The action failed.");
+      await resetDemo({});
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
@@ -236,8 +219,7 @@ export default function Dashboard4() {
     );
   }
 
-  const { product, integrations, incidents, clusters, events, sessions } =
-    overview;
+  const { product, integrations, incidents, events, sessions } = overview;
   const integration = integrations[0];
   const openIncidents = incidents.filter(
     (incident) =>
@@ -248,6 +230,7 @@ export default function Dashboard4() {
   const activeSessions = sessions.filter((session) =>
     ["working", "blocked", "resumed", "launching"].includes(session.status),
   );
+  const repairPRs = sessions.filter((session) => session.prUrl).length;
   const latestIncident = incidents[0];
   const integrationStatus = !integration
     ? { word: "Not configured", dot: "bg-neutral-300 dark:bg-neutral-600" }
@@ -255,23 +238,6 @@ export default function Dashboard4() {
         !["not_impacted", "repair_proposed"].includes(latestIncident.status)
       ? { word: STATUS_WORD[latestIncident.status], dot: INCIDENT_DOT[latestIncident.status] }
       : { word: "Operational", dot: "bg-emerald-500" };
-
-  const controls: { label: string; run: () => Promise<unknown> }[] = [
-    { label: "Reset vendor (2022-08-01)", run: () => resetV1({}) },
-    { label: "Upgrade vendor (2022-11-15)", run: () => upgradeV2({}) },
-    { label: "Run monitor now", run: () => runMonitorNow({}) },
-    { label: "Run integration", run: () => runIntegration({}) },
-    { label: "Seed complaints", run: () => seedComplaints({}) },
-    {
-      label: "Force threshold",
-      run: async () => {
-        const target = clusters.find((cluster) => cluster.status === "open");
-        if (!target) return { message: "No open feedback cluster to trigger." };
-        return forceThreshold({ clusterId: target._id });
-      },
-    },
-    { label: "Wipe all demo data", run: () => resetDemo({}) },
-  ];
 
   return (
     <div className="relative flex h-full min-h-[720px] w-full flex-col overflow-hidden bg-white dark:bg-neutral-950">
@@ -315,47 +281,10 @@ export default function Dashboard4() {
             hint={`${sessions.length} total`}
           />
           <StatCard
-            label="Feedback clusters"
-            value={String(clusters.length)}
-            hint={`threshold ${product.threshold}`}
+            label="Repair PRs"
+            value={String(repairPRs)}
+            hint="never auto-merged"
           />
-        </div>
-
-        <div className={cx(card, "mt-4")}>
-          <div className={cardHeader}>
-            <h2 className={cardTitle}>Demo controls</h2>
-            {notice ? (
-              <span className="min-w-0 truncate text-xs text-neutral-500">
-                {notice}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap gap-2 p-3">
-            {controls.map((control) => (
-              <button
-                key={control.label}
-                type="button"
-                disabled={busy !== null}
-                onClick={() => void runControl(control.label, control.run)}
-                className={buttonClass}
-              >
-                {busy === control.label ? (
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                ) : null}
-                {control.label}
-              </button>
-            ))}
-            {integration ? (
-              <a
-                href={integration.docsUrl}
-                target="_blank"
-                rel="noreferrer"
-                className={buttonClass}
-              >
-                Open docs mirror <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            ) : null}
-          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -392,7 +321,7 @@ export default function Dashboard4() {
                     <div>
                       <dt className="text-neutral-500">Monitor</dt>
                       <dd className="text-neutral-900 dark:text-neutral-100">
-                        {integration.monitorId ?? "manual (Run monitor now)"}
+                        watching docs mirror
                       </dd>
                     </div>
                     <div>
@@ -418,121 +347,11 @@ export default function Dashboard4() {
 
             <div className={card}>
               <div className={cardHeader}>
-                <h2 className={cardTitle}>Feedback clusters</h2>
-                <span className={countBadge}>{clusters.length}</span>
-              </div>
-              {clusters.length ? (
-                <ul className="flex flex-col gap-1.5 p-1.5">
-                  {clusters.map((cluster) => (
-                    <li
-                      key={cluster._id}
-                      className="flex min-h-11 items-start gap-2.5 rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2.5 dark:bg-neutral-800/50"
-                    >
-                      <span
-                        className={cx(
-                          "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
-                          cluster.status === "pr_open"
-                            ? "bg-emerald-500"
-                            : cluster.status === "triggered"
-                              ? "bg-red-500"
-                              : "bg-amber-500",
-                        )}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] text-neutral-900 dark:text-neutral-100">
-                          {cluster.title}
-                        </p>
-                        <p className="mt-0.5 text-xs text-neutral-500">
-                          {cluster.count}/{product.threshold} · {cluster.status}
-                          {cluster.session?.prUrl ? (
-                            <a
-                              href={cluster.session.prUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="ml-2 text-emerald-700 underline dark:text-emerald-400"
-                            >
-                              PR
-                              {cluster.session.prNumber
-                                ? ` #${cluster.session.prNumber}`
-                                : ""}
-                            </a>
-                          ) : null}
-                        </p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="p-4 text-[13px] text-neutral-500">
-                  No feedback clusters yet. Seed complaints to demo the feedback
-                  agent.
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-4">
-            <div className={card}>
-              <div className={cardHeader}>
-                <h2 className={cardTitle}>API incidents</h2>
-                <span className={countBadge}>{incidents.length}</span>
-              </div>
-              {incidents.length ? (
-                <ul className="flex flex-col gap-1.5 p-1.5">
-                  {incidents.map((incident) => (
-                    <li
-                      key={incident._id}
-                      className="rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2.5 dark:bg-neutral-800/50"
-                    >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedIncident(
-                            expandedIncident === incident._id
-                              ? null
-                              : incident._id,
-                          )
-                        }
-                        className="flex w-full cursor-pointer items-start gap-2.5 text-left"
-                      >
-                        <span
-                          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${INCIDENT_DOT[incident.status] ?? "bg-neutral-300"}`}
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px] text-neutral-900 dark:text-neutral-100">
-                            {incident.title}
-                          </span>
-                          <span className="mt-0.5 block text-xs text-neutral-500">
-                            {STATUS_WORD[incident.status] ?? incident.status}
-                            {incident.diagnosisVerdict
-                              ? ` · verdict: ${incident.diagnosisVerdict}`
-                              : ""}
-                            {" · "}
-                            {timeAgo(incident._creationTime)}
-                          </span>
-                        </span>
-                      </button>
-                      {expandedIncident === incident._id ? (
-                        <IncidentTimeline incidentId={incident._id} />
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="p-4 text-[13px] text-neutral-500">
-                  No incidents. Upgrade the vendor and run the monitor to start
-                  the demo.
-                </p>
-              )}
-            </div>
-
-            <div className={card}>
-              <div className={cardHeader}>
                 <h2 className={cardTitle}>Live feed</h2>
                 <span className={countBadge}>{events.length}</span>
               </div>
               {events.length ? (
-                <ul className="flex max-h-80 flex-col gap-1.5 overflow-y-auto p-1.5">
+                <ul className="flex max-h-96 flex-col gap-1.5 overflow-y-auto p-1.5">
                   {events.map((event) => (
                     <li
                       key={event._id}
@@ -559,8 +378,84 @@ export default function Dashboard4() {
               )}
             </div>
           </div>
+
+          <div className={card}>
+            <div className={cardHeader}>
+              <h2 className={cardTitle}>API incidents</h2>
+              <span className={countBadge}>{incidents.length}</span>
+            </div>
+            {incidents.length ? (
+              <ul className="flex flex-col gap-1.5 p-1.5">
+                {incidents.map((incident) => (
+                  <li
+                    key={incident._id}
+                    className="rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2.5 dark:bg-neutral-800/50"
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedIncident(
+                          expandedIncident === incident._id
+                            ? null
+                            : incident._id,
+                        )
+                      }
+                      className="flex w-full cursor-pointer items-start gap-2.5 text-left"
+                    >
+                      <span
+                        className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${INCIDENT_DOT[incident.status] ?? "bg-neutral-300"}`}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] text-neutral-900 dark:text-neutral-100">
+                          {incident.title}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-neutral-500">
+                          {STATUS_WORD[incident.status] ?? incident.status}
+                          {incident.diagnosisVerdict
+                            ? ` · verdict: ${incident.diagnosisVerdict}`
+                            : ""}
+                          {" · "}
+                          {timeAgo(incident._creationTime)}
+                        </span>
+                      </span>
+                    </button>
+                    {expandedIncident === incident._id ? (
+                      <IncidentTimeline incidentId={incident._id} />
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="p-4 text-[13px] text-neutral-500">
+                No incidents. Ship the vendor upgrade from the Stripe docs page
+                to start the demo.
+              </p>
+            )}
+          </div>
         </div>
       </div>
+
+      <footer className="flex shrink-0 flex-wrap items-center justify-center gap-3 border-t border-neutral-200 px-4 py-3 sm:px-6 dark:border-neutral-800">
+        {integration ? (
+          <a
+            href={integration.docsUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={buttonClass}
+          >
+            Open Stripe docs <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        ) : null}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void handleReset()}
+          className={buttonClass}
+        >
+          {busy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
+          Reset demo
+        </button>
+      </footer>
     </div>
   );
 }

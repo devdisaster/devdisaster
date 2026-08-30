@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { action, mutation } from "./_generated/server";
+import { action, internalAction, mutation } from "./_generated/server";
 
 const NEW_VERSION = "2022-11-15";
 const OLD_VERSION = "2022-08-01" as const;
@@ -9,13 +9,15 @@ const OLD_VERSION = "2022-08-01" as const;
 const gatewayBase = (docsUrl: string) =>
   docsUrl.replace(/\/demo\/stripe\/docs$/, "");
 
-export const runMonitorNow = action({
+const monitorScanResult = v.object({
+  changed: v.boolean(),
+  incidentId: v.optional(v.id("incidents")),
+  message: v.string(),
+});
+
+export const monitorScan = internalAction({
   args: {},
-  returns: v.object({
-    changed: v.boolean(),
-    incidentId: v.optional(v.id("incidents")),
-    message: v.string(),
-  }),
+  returns: monitorScanResult,
   handler: async (ctx) => {
     const integration: Doc<"integrations"> = await ctx.runQuery(
       internal.vendor.getIntegration,
@@ -63,6 +65,19 @@ export const runMonitorNow = action({
         : "Breaking docs change detected; evidence attached to the existing incident.",
     };
   },
+});
+
+type MonitorScanResult = {
+  changed: boolean;
+  incidentId?: Doc<"incidents">["_id"];
+  message: string;
+};
+
+export const runMonitorNow = action({
+  args: {},
+  returns: monitorScanResult,
+  handler: async (ctx): Promise<MonitorScanResult> =>
+    ctx.runAction(internal.demo.monitorScan, {}),
 });
 
 export const runIntegration = action({
