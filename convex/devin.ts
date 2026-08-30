@@ -468,7 +468,7 @@ export const launchPlain = internalAction({
           prompt,
           idempotent: true,
           max_acu_limit: 5,
-          title: `Sentinel: ${packet.kind === "incident" ? packet.incident.title : packet.cluster.title}`,
+          title: `Kevin (not Devin): ${packet.kind === "incident" ? packet.incident.title : packet.cluster.title}`,
           structured_output_schema: structuredOutputSchema,
         }),
       });
@@ -639,7 +639,7 @@ export const recordNudgeResult = internalMutation({
       incidentId: session.incidentId,
       sentinel: "system",
       message: sent
-        ? "Devin was blocked; Sentinel sent one controlled proceed nudge."
+        ? "Devin was blocked; Kevin (not Devin) sent one controlled proceed nudge."
         : "Devin was blocked; the single controlled nudge attempt failed.",
       level: sent ? "warn" : "critical",
     });
@@ -706,10 +706,12 @@ export const applyPoll = internalMutation({
 
     const finished = payload.status === "finished";
     const terminalFailure = terminalFailureStatuses.has(payload.status);
+    const evidenceComplete =
+      Boolean(payload.prUrl) && payload.testStatus === "passed";
     if (session.incidentId) {
       const incident = await ctx.db.get("incidents", session.incidentId);
       if (!incident || incident.status === "repair_proposed" || incident.status === "repair_failed") return null;
-      if (finished && payload.prUrl && payload.testStatus === "passed") {
+      if ((finished || payload.status === "blocked") && evidenceComplete) {
         await ctx.db.patch("incidents", incident._id, { status: "validating" });
         await ctx.db.insert("events", {
           productId: session.productId,
@@ -723,7 +725,7 @@ export const applyPoll = internalMutation({
           productId: session.productId,
           incidentId: incident._id,
           sentinel: "integration",
-          message: "Repair PR proposed with passing tests. Human review is required; Sentinel will not merge it.",
+          message: "Repair PR proposed with passing tests. Human review is required; Kevin (not Devin) will not merge it.",
           level: "info",
         });
       } else if (finished || terminalFailure || payload.testStatus === "failed") {
@@ -746,7 +748,11 @@ export const applyPoll = internalMutation({
       return null;
     }
 
-    if (session.clusterId && finished && payload.prUrl) {
+    if (
+      session.clusterId &&
+      (finished || payload.status === "blocked") &&
+      payload.prUrl
+    ) {
       const cluster = await ctx.db.get("clusters", session.clusterId);
       if (cluster && cluster.status === "triggered") {
         await ctx.db.patch("clusters", cluster._id, { status: "pr_open" });

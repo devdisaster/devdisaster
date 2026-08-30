@@ -17,7 +17,6 @@ import type * as docs from "../docs.js";
 import type * as http from "../http.js";
 import type * as incidents from "../incidents.js";
 import type * as ingest from "../ingest.js";
-import type * as onboarding from "../onboarding.js";
 import type * as seed from "../seed.js";
 import type * as threshold from "../threshold.js";
 import type * as vendor from "../vendor.js";
@@ -38,7 +37,6 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   incidents: typeof incidents;
   ingest: typeof ingest;
-  onboarding: typeof onboarding;
   seed: typeof seed;
   threshold: typeof threshold;
   vendor: typeof vendor;
