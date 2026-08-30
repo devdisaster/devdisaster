@@ -87,7 +87,7 @@ export const reset = mutation({
       productId: product._id,
       integrationId: integration._id,
       monitorId: "mon_stripe_docs_demo",
-      url: integration.docsUrl,
+      url: "https://docs.stripe.com/changelog",
       summary:
         "Stripe docs updated: clarified error-code descriptions for /v1/payment_intents. No schema or field changes.",
       isBreaking: false,
@@ -149,7 +149,7 @@ export const triggerStripeUpgrade = mutation({
       productId: product._id,
       integrationId: integration._id,
       monitorId: "mon_stripe_docs_demo",
-      url: integration.docsUrl,
+      url: "https://docs.stripe.com/changelog/2022-11-15",
       summary:
         "2022-11-15: Removes the `charges` attribute from the PaymentIntent object — use `latest_charge` instead.",
       isBreaking: true,
