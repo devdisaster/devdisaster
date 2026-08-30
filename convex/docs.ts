@@ -55,12 +55,48 @@ const stripHtml = (html: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-const fetchDocsExcerpt = async (docsUrl: string) => {
-  const response = await fetch(docsUrl, {
-    headers: { Accept: "text/html,application/json" },
-  });
-  if (!response.ok) return undefined;
-  return stripHtml(await response.text()).slice(0, MAX_EXCERPT_CHARS);
+type RetrievedDocs = { text: string; via: "context.dev" | "direct" };
+
+export const retrieveDocs = async (
+  docsUrl: string,
+): Promise<RetrievedDocs | undefined> => {
+  const apiKey = process.env.CONTEXT_API_KEY;
+  if (apiKey) {
+    try {
+      const url = new URL("https://api.context.dev/v1/web/scrape/markdown");
+      url.searchParams.set("url", docsUrl);
+      url.searchParams.set("maxAgeMs", "0");
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as {
+          success?: boolean;
+          markdown?: string;
+        };
+        if (payload.success && typeof payload.markdown === "string" && payload.markdown.trim()) {
+          return {
+            text: payload.markdown.slice(0, MAX_EXCERPT_CHARS),
+            via: "context.dev",
+          };
+        }
+      }
+    } catch {
+      // fall through to the direct fetch
+    }
+  }
+  try {
+    const response = await fetch(docsUrl, {
+      headers: { Accept: "text/html,application/json" },
+    });
+    if (!response.ok) return undefined;
+    return {
+      text: stripHtml(await response.text()).slice(0, MAX_EXCERPT_CHARS),
+      via: "direct",
+    };
+  } catch {
+    return undefined;
+  }
 };
 
 const fetchIntegrationFile = async (repo: string, path: string) => {
@@ -249,16 +285,17 @@ export const gatherAndDiagnose = internalAction({
       return null;
     }
 
-    let docsExcerpt: string | undefined;
+    let docs: RetrievedDocs | undefined;
     let code: string | undefined;
     try {
-      [docsExcerpt, code] = await Promise.all([
-        fetchDocsExcerpt(integration.docsUrl),
+      [docs, code] = await Promise.all([
+        retrieveDocs(integration.docsUrl),
         fetchIntegrationFile(product.repo, integration.integrationPath),
       ]);
     } catch {
-      docsExcerpt = undefined;
+      docs = undefined;
     }
+    const docsExcerpt = docs?.text;
     if (!docsExcerpt) {
       await apply(
         "uncertain",
@@ -312,6 +349,9 @@ export const gatherAndDiagnose = internalAction({
         ...(diagnosis.contractChange
           ? [`Contract change: ${diagnosis.contractChange}`]
           : []),
+        docs?.via === "context.dev"
+          ? "Latest docs retrieved through the Context.dev scrape API."
+          : "Latest docs retrieved by direct fetch (Context.dev fallback).",
         ...diagnosis.evidence,
         ...(codeMatches
           ? []

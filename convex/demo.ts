@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { action, internalAction, mutation } from "./_generated/server";
+import { retrieveDocs } from "./docs";
 
 const NEW_VERSION = "2022-11-15";
 const OLD_VERSION = "2022-08-01" as const;
@@ -41,6 +42,7 @@ export const monitorScan = internalAction({
         message: `Monitor run found no breaking change; the docs still describe ${observedVersion}.`,
       };
     }
+    const scraped = await retrieveDocs(integration.docsUrl);
     const summary =
       "The 2022-11-15 changelog removes the `charges` attribute from the PaymentIntent object — integrations must use `latest_charge` instead.";
     const result: { incidentId: Doc<"incidents">["_id"]; created: boolean } =
@@ -55,6 +57,8 @@ export const monitorScan = internalAction({
           source: "monitor-run",
           observedVersion,
           docsUrl: integration.docsUrl,
+          retrievedVia: scraped?.via ?? "unavailable",
+          docsExcerpt: scraped?.text.slice(0, 1500),
         },
       });
     return {
