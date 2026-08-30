@@ -43,7 +43,7 @@ Devin ──→ GitHub org: invoicepilot repo → tested PRs (never merge/deploy
 | Secondary agent | **Feedback**: REAL posts on **r/&lt;InvoicePilot&gt;** (created tonight; teammates post real complaints; live on-stage post possible). Backup: public feedback-board page in the invoicepilot app, also genuinely scraped. Final fallback: seed mutation |
 | Devin | Enabled — sessions open PRs on `invoicepilot`. Products without a `repo` configured would stop at clustering/alerting (the permission model exists; no observer product in this demo) |
 
-**Repos** (create at the event; org decided tonight): `sentinel` (product + controlled Stripe gateway/docs routes) and `invoicepilot` (demo SaaS, Devin's target, Devin GitHub App installed).
+**Repos** (DONE 30 Aug — org is `devdisaster`): Sentinel product code lives in **`devdisaster/devdisaster`** (this repo, alongside the docs — the separate `sentinel` repo was cut); **`devdisaster/invoicepilot`** (public; demo SaaS, Devin's target) exists with smoke-test PRs #1–2 proving the Devin loop.
 
 **Component decisions:** core pipeline = plain actions + crons + `ctx.scheduler`. The Integration Engineer flow uses three logical roles—detection, diagnosis, and repair—but implements them as ordinary Convex functions rather than an agent framework. `@convex-dev/workflow` wraps only the Devin session lifecycle, added after the plain version works. No `@convex-dev/agent`. The dashboard starts from ReactBits Pro Application UI's operations-dashboard pattern rather than a custom layout; it is installed through the required shadcn registry tooling, then wired directly to Convex data.
 
@@ -205,7 +205,7 @@ Launch — `POST https://api.devin.ai/v1/sessions`, header `Authorization: Beare
 
 Poll — `GET https://api.devin.ai/v1/sessions/{id}` → `status_enum` (`working|blocked|finished|expired|...`), `pull_request?.url`, `structured_output`. Poll every 15–30s while sessions active. No outbound webhook — polling is the documented pattern.
 
-Nudge when `blocked` — `POST /v1/sessions/{id}/message` `{"message": "Proceed with your best judgment."}`.
+Nudge when `blocked` — `POST /v1/session/{id}/message` (**singular `session` — verified live 30 Aug**; the plural path 405s) `{"message": "Proceed with your best judgment."}`.
 
 ### R3. Devin prompt templates
 
@@ -373,13 +373,20 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4) → P5(secondary) → P6 �
 
 **Objective:** one repo, four laptops building in parallel with a shared contract.
 
+**Pre-work status (completed 30 Aug):**
+- ✅ Org `devdisaster`; repos `devdisaster` (Sentinel code + docs, `sentinel` repo cut), `invoicepilot` (public), `landing`
+- ✅ All 4 API keys verified live via `./setup/verify-keys.sh` (keys in local `.env`, gitignored; template in `.env.example`)
+- ✅ Devin GitHub App installed org-wide **and** `@devdisaster` connected in Devin Settings → Connections → GitHub (BOTH are required — see §K)
+- ✅ Devin loop proven end-to-end: smoke-test PRs invoicepilot#1 (LICENSE) and #2 (README) opened by real API-launched sessions
+- ⏳ r/InvoicePilot subreddit + test post; ReactBits Pro license confirmation
+
 **Deliverables**
-1. GitHub org repos created: `sentinel`, `invoicepilot` (README-only for now). Devin GitHub App covers both (installed org-wide tonight).
-2. `npm create convex@latest sentinel` (Vite + React) → pushed. Everyone clones; each runs `npx convex dev` (personal dev deployment); hot reload verified on all 3 laptops.
+1. ~~GitHub org repos~~ DONE (see pre-work). Product name locked: **InvoicePilot**.
+2. Scaffold Convex (Vite + React) **inside `devdisaster/devdisaster`** → pushed. Everyone clones; each runs `npx convex dev` (personal dev deployment); hot reload verified on all 3 laptops.
 3. **`convex/schema.ts` exactly as R1** + stub files with exported, typed, `throw new Error("todo")` function signatures: `incidents.ts`, `docs.ts`, `devin.ts`, `vendor.ts`, `http.ts`, `ingest.ts`, `cluster.ts`, `threshold.ts`, `crons.ts`, `seed.ts`. Committed and pushed before anyone splits off.
-4. Env vars (R7) set in every dev deployment + prod. Verify the Stripe test key with one raw `curl https://api.stripe.com/v1/payment_intents -u sk_test_...: -d amount=1000 -d currency=aed -d "payment_method_types[]=card"`.
+4. Env vars (R7) set in every dev deployment + prod (values are in local `.env`; verify anytime with `./setup/verify-keys.sh` — already passed 30 Aug including the raw Stripe PaymentIntent call).
 5. Confirm the team has a ReactBits Pro or Ultimate license. Run `npx shadcn@latest init` because ReactBits Application UI uses the shadcn registry protocol, register `@reactbits-pro` in `components.json` per the official installation guide, then install the operations dashboard with `npx shadcn@latest add @reactbits-pro/dashboard-4`. Keep the license key only in local `.env.local`; never commit it. Do not install extra templates until Dashboard 4 is wired.
-6. One product row inserted (via a `seed.setupProducts` mutation): InvoicePilot (repo `org/invoicepilot`, subreddit `<InvoicePilotName>`, feedbackUrl placeholder, threshold 5). Insert one `integrations` row: provider `stripe`, endpoint `/v1/payment_intents`, docs URL = the mirror route, integrationPath `src/lib/stripe.ts`, expectedContract (the 2022-08-01 shape summary), `activeContractVersion: "2022-08-01"`, testCommand `npm test`.
+6. One product row inserted (via a `seed.setupProducts` mutation): InvoicePilot (repo `devdisaster/invoicepilot`, subreddit `InvoicePilot`, feedbackUrl placeholder, threshold 5). Insert one `integrations` row: provider `stripe`, endpoint `/v1/payment_intents`, docs URL = the mirror route, integrationPath `src/lib/stripe.ts`, expectedContract (the 2022-08-01 shape summary), `activeContractVersion: "2022-08-01"`, testCommand `npm test`.
 
 **Acceptance:** all 3 laptops render the ReactBits Dashboard 4 scaffold against their own deployment; `schema.ts` + stubs are on main; the product row and the single Stripe integration row are visible in the Convex data browser; the raw Stripe test call succeeded; no license key is tracked by Git.
 
@@ -550,7 +557,8 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4) → P5(secondary) → P6 �
 | Risk | Mitigation |
 |---|---|
 | Devin slow/stuck during judging | Pre-warmed finished PR; live session runs in background; backup video; rehearsal PR as exhibit |
-| Devin key/plan issue | Verified tonight via SETUP.md curl |
+| Devin key/plan issue | Verified 30 Aug via `setup/verify-keys.sh` (all 4 keys, live calls) |
+| Devin GitHub App uninstall/reinstall | Reinstalling on GitHub alone is NOT enough — Devin reports `push:false` until the org is re-added under Devin Settings → Connections → GitHub. Hit + fixed 30 Aug; re-verify with a smoke PR after any integration change |
 | Stripe test key blocked / venue network kills upstream calls | `cachedResponse` fallback in the gateway (verified in P6 airplane-mode test); raw-curl verification at registration |
 | Gateway shaping drifts from real Stripe shapes | R9 shapes copied from the real 2022-11-15 changelog + object reference; sanity-check against docs.stripe.com during P2 |
 | New subreddit auto-filtered | Aged account creates it tonight + test post tonight; backup = feedback board (P3.5, same pipeline); final fallback = seeds — affects the secondary agent only |
