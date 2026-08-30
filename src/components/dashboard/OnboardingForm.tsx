@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-
-const inputClass =
-  "h-9 w-full rounded-[var(--rb-r-md,8px)] border border-neutral-200 bg-white px-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rb-accent,oklch(20.5%_0_0))] dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600 dark:focus-visible:outline-[var(--rb-accent,oklch(100%_0_0))]";
-
-const labelClass = "text-xs font-medium text-neutral-600 dark:text-neutral-400";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 function Field({
   label,
@@ -15,10 +15,10 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="flex min-w-0 flex-col gap-1">
-      <span className={labelClass}>{label}</span>
+    <Label className="flex min-w-0 flex-col items-start gap-1 text-xs font-medium text-muted-foreground">
+      {label}
       {children}
-    </label>
+    </Label>
   );
 }
 
@@ -78,113 +78,115 @@ export function OnboardingForm() {
   };
 
   return (
-    <div className="overflow-hidden rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="flex h-12 items-center bg-neutral-50 px-4 dark:bg-neutral-900/60">
-        <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+    <Card className="overflow-hidden">
+      <CardHeader className="flex h-12 flex-row items-center bg-muted/60 py-0">
+        <CardTitle className="text-sm font-medium text-foreground">
           Onboard a product
-        </h2>
-      </div>
-      <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-4 p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label="Product name">
-            <input name="name" required placeholder="InvoicePilot" className={inputClass} />
-          </Field>
-          <Field label="GitHub repository (optional — absent = observer mode)">
-            <input name="repo" placeholder="org/repo" className={inputClass} />
-          </Field>
-          <div className="sm:col-span-2">
-            <Field label="Description">
-              <input
-                name="description"
-                required
-                placeholder="What the product does — feeds clustering and Devin prompts"
-                className={inputClass}
-              />
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Product name">
+              <Input name="name" required placeholder="InvoicePilot" className="text-sm" />
             </Field>
-          </div>
-          <Field label="Subreddit (optional)">
-            <input name="subreddit" placeholder="InvoicePilot" className={inputClass} />
-          </Field>
-          <Field label="Feedback board URL (optional)">
-            <input name="feedbackUrl" type="url" placeholder="https://…/feedback" className={inputClass} />
-          </Field>
-          <Field label="Complaint threshold">
-            <input
-              name="threshold"
-              type="number"
-              min={1}
-              defaultValue={5}
-              required
-              className={inputClass}
-            />
-          </Field>
-        </div>
-
-        <label className="flex items-center gap-2 text-[13px] text-neutral-700 dark:text-neutral-300">
-          <input
-            type="checkbox"
-            checked={withIntegration}
-            onChange={(e) => setWithIntegration(e.target.checked)}
-            className="h-4 w-4 rounded border-neutral-300 dark:border-neutral-700"
-          />
-          Register an API integration
-        </label>
-
-        {withIntegration ? (
-          <div className="grid grid-cols-1 gap-3 rounded-[var(--rb-r-lg,10px)] bg-neutral-50 p-3 sm:grid-cols-2 dark:bg-neutral-800/50">
-            <Field label="Integration name">
-              <input name="integrationName" required placeholder="Stripe Payments" className={inputClass} />
-            </Field>
-            <Field label="Provider">
-              <input name="provider" required placeholder="stripe" className={inputClass} />
-            </Field>
-            <Field label="Docs URL">
-              <input name="docsUrl" type="url" required placeholder="https://…/docs" className={inputClass} />
-            </Field>
-            <Field label="Endpoint">
-              <input name="endpoint" required placeholder="/v1/payment_intents" className={inputClass} />
-            </Field>
-            <Field label="Integration path">
-              <input name="integrationPath" required placeholder="src/lib/stripe.ts" className={inputClass} />
-            </Field>
-            <Field label="Test command">
-              <input name="testCommand" required placeholder="npm test" className={inputClass} />
+            <Field label="GitHub repository (optional — absent = observer mode)">
+              <Input name="repo" placeholder="org/repo" className="text-sm" />
             </Field>
             <div className="sm:col-span-2">
-              <Field label="Expected contract">
-                <input
-                  name="expectedContract"
+              <Field label="Description">
+                <Input
+                  name="description"
                   required
-                  placeholder="What the code assumes the response contains today"
-                  className={inputClass}
+                  placeholder="What the product does — feeds clustering and Devin prompts"
+                  className="text-sm"
                 />
               </Field>
             </div>
+            <Field label="Subreddit (optional)">
+              <Input name="subreddit" placeholder="InvoicePilot" className="text-sm" />
+            </Field>
+            <Field label="Feedback board URL (optional)">
+              <Input name="feedbackUrl" type="url" placeholder="https://…/feedback" className="text-sm" />
+            </Field>
+            <Field label="Complaint threshold">
+              <Input
+                name="threshold"
+                type="number"
+                min={1}
+                defaultValue={5}
+                required
+                className="text-sm"
+              />
+            </Field>
           </div>
-        ) : null}
 
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={busy}
-            className="inline-flex h-9 cursor-pointer items-center rounded-[var(--rb-r-md,8px)] bg-neutral-900 px-4 text-sm font-medium text-white transition-[transform,opacity] duration-150 active:scale-[0.97] focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rb-accent,oklch(20.5%_0_0))] disabled:pointer-events-none disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:focus-visible:outline-[var(--rb-accent,oklch(100%_0_0))]"
-          >
-            {busy ? "Registering…" : "Register product"}
-          </button>
-          {result ? (
-            <p
-              role="status"
-              className={`min-w-0 truncate text-[13px] ${
-                result.error
-                  ? "text-red-600 dark:text-red-400"
-                  : "text-neutral-600 dark:text-neutral-400"
-              }`}
-            >
-              {result.text}
-            </p>
+          <div className="flex items-center gap-2 text-[13px] text-foreground">
+            <Checkbox
+              id="withIntegration"
+              checked={withIntegration}
+              onCheckedChange={(checked) => setWithIntegration(checked === true)}
+            />
+            <Label htmlFor="withIntegration" className="text-sm font-normal text-foreground">
+              Register an API integration
+            </Label>
+          </div>
+
+          {withIntegration ? (
+            <div className="grid grid-cols-1 gap-3 rounded-lg bg-muted p-3 sm:grid-cols-2">
+              <Field label="Integration name">
+                <Input name="integrationName" required placeholder="Stripe Payments" className="text-sm" />
+              </Field>
+              <Field label="Provider">
+                <Input name="provider" required placeholder="stripe" className="text-sm" />
+              </Field>
+              <Field label="Docs URL">
+                <Input name="docsUrl" type="url" required placeholder="https://…/docs" className="text-sm" />
+              </Field>
+              <Field label="Endpoint">
+                <Input name="endpoint" required placeholder="/v1/payment_intents" className="text-sm" />
+              </Field>
+              <Field label="Integration path">
+                <Input name="integrationPath" required placeholder="src/lib/stripe.ts" className="text-sm" />
+              </Field>
+              <Field label="Test command">
+                <Input name="testCommand" required placeholder="npm test" className="text-sm" />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Expected contract">
+                  <Input
+                    name="expectedContract"
+                    required
+                    placeholder="What the code assumes the response contains today"
+                    className="text-sm"
+                  />
+                </Field>
+              </div>
+            </div>
           ) : null}
-        </div>
-      </form>
-    </div>
+
+          <div className="flex items-center gap-3">
+            <Button
+              type="submit"
+              disabled={busy}
+            >
+              {busy ? "Registering…" : "Register product"}
+            </Button>
+            {result ? (
+              <p
+                role="status"
+                className={`min-w-0 truncate text-[13px] ${
+                  result.error
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+                }`}
+              >
+                {result.text}
+              </p>
+            ) : null}
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

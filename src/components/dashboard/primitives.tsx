@@ -1,6 +1,13 @@
 import type { ReactNode } from "react";
-import { Dialog } from "radix-ui";
-import { ExternalLink, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SessionSummary } from "./hooks";
 
@@ -18,16 +25,16 @@ export function Pill({
   children: ReactNode;
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-[var(--rb-r-xs,4px)] bg-neutral-100 px-1.5 py-0.5 text-[11px] font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
+    <Badge variant="secondary" className="h-5 gap-1 px-2 text-xs font-medium">
       {dot ? <StatusDot className={dot} /> : null}
       {children}
-    </span>
+    </Badge>
   );
 }
 
 export function PrLink({ session }: { session: SessionSummary | null }) {
   if (!session?.prUrl) {
-    return <span className="text-[13px] text-neutral-500">No PR yet</span>;
+    return <span className="text-[13px] text-muted-foreground">No PR yet</span>;
   }
   return (
     <a
@@ -35,7 +42,7 @@ export function PrLink({ session }: { session: SessionSummary | null }) {
       target="_blank"
       rel="noreferrer"
       onClick={(e) => e.stopPropagation()}
-      className="inline-flex items-center gap-1 text-[13px] text-neutral-900 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-500 dark:text-neutral-100 dark:decoration-neutral-600"
+      className="inline-flex items-center gap-1 text-[13px] text-foreground underline decoration-border underline-offset-2 transition-colors hover:decoration-foreground"
     >
       {session.prNumber ? `PR #${session.prNumber}` : "View PR"}
       <ExternalLink aria-hidden className="h-3 w-3 shrink-0" />
@@ -52,10 +59,8 @@ export function PanelEmpty({
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-1 px-4 py-10 text-center">
-      <p className="text-[13px] text-neutral-600 dark:text-neutral-400">
-        {title}
-      </p>
-      {hint ? <p className="text-xs text-neutral-500">{hint}</p> : null}
+      <p className="text-[13px] text-muted-foreground">{title}</p>
+      {hint ? <p className="text-xs text-muted-foreground/70">{hint}</p> : null}
     </div>
   );
 }
@@ -66,7 +71,7 @@ export function PanelLoading({ rows = 3 }: { rows?: number }) {
       {Array.from({ length: rows }, (_, i) => (
         <div
           key={i}
-          className="h-11 animate-pulse rounded-[var(--rb-r-lg,10px)] bg-neutral-100 motion-reduce:animate-none dark:bg-neutral-800/50"
+          className="h-11 animate-pulse rounded-lg bg-muted motion-reduce:animate-none"
         />
       ))}
     </div>
@@ -81,8 +86,8 @@ export function DrawerSection({
   children: ReactNode;
 }) {
   return (
-    <section className="border-t border-neutral-100 px-4 py-3 first:border-t-0 dark:border-neutral-800/70">
-      <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+    <section className="border-t border-border px-4 py-3 first:border-t-0">
+      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {title}
       </h3>
       <div className="mt-2 flex flex-col gap-2">{children}</div>
@@ -104,32 +109,21 @@ export function Drawer({
   children: ReactNode;
 }) {
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-neutral-950/30 backdrop-blur-[1px] dark:bg-neutral-950/60" />
-        <Dialog.Content
-          aria-describedby={undefined}
-          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-neutral-200 bg-white shadow-xl focus:outline-none sm:w-[32rem] dark:border-neutral-800 dark:bg-neutral-950"
-        >
-          <header className="flex shrink-0 items-start justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
-            <div className="min-w-0">
-              <Dialog.Title className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                {title}
-              </Dialog.Title>
-              {subtitle ? (
-                <div className="mt-1 text-xs text-neutral-500">{subtitle}</div>
-              ) : null}
-            </div>
-            <Dialog.Close
-              aria-label="Close"
-              className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-[var(--rb-r-md,8px)] text-neutral-500 hover:bg-neutral-100 focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rb-accent,oklch(20.5%_0_0))] dark:hover:bg-neutral-800 dark:focus-visible:outline-[var(--rb-accent,oklch(100%_0_0))]"
-            >
-              <X aria-hidden className="h-4 w-4" />
-            </Dialog.Close>
-          </header>
-          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="w-full data-[side=right]:sm:max-w-lg"
+      >
+        <SheetHeader className="pb-2">
+          <SheetTitle className="text-base font-medium">{title}</SheetTitle>
+          {subtitle ? (
+            <SheetDescription className="text-xs">
+              {subtitle}
+            </SheetDescription>
+          ) : null}
+        </SheetHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      </SheetContent>
+    </Sheet>
   );
 }

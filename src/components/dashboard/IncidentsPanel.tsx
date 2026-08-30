@@ -18,6 +18,14 @@ import {
   PrLink,
   StatusDot,
 } from "./primitives";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 function IncidentRowItem({
   incident,
@@ -28,18 +36,20 @@ function IncidentRowItem({
 }) {
   const status = incidentStatus(incident.status);
   return (
-    <li className="flex min-h-11 items-start gap-2.5 rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2.5 transition-colors duration-150 hover:bg-neutral-100 dark:bg-neutral-800/50 dark:hover:bg-neutral-800">
+    <li className="flex min-h-11 items-start gap-2.5 rounded-lg bg-muted px-3 py-2.5 transition-colors duration-150 hover:bg-muted/80">
       <button
         type="button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 cursor-pointer items-start gap-2.5 rounded-[var(--rb-r-sm,6px)] text-left focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rb-accent,oklch(20.5%_0_0))] dark:focus-visible:outline-[var(--rb-accent,oklch(100%_0_0))]"
+        className={cn(
+          "flex min-w-0 flex-1 cursor-pointer items-start gap-2.5 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        )}
       >
         <StatusDot className={`mt-1.5 ${status.dot}`} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] text-neutral-900 dark:text-neutral-100">
+          <p className="truncate text-[13px] text-foreground">
             {incident.title}
           </p>
-          <p className="mt-0.5 text-xs text-neutral-500">
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {status.label} · {timeAgo(incident.createdAt)}
             {incident.verdict
               ? ` · ${VERDICT_LABEL[incident.verdict] ?? incident.verdict}`
@@ -79,41 +89,67 @@ function IncidentRowItem({
 
 export function IncidentsPanel({
   onOpenIncident,
+  search = "",
 }: {
   onOpenIncident: (incidentId: Id<"incidents">) => void;
+  search?: string;
 }) {
-  const incidents = useIncidents();
+  const allIncidents = useIncidents();
+  const query = search.trim().toLowerCase();
+  const incidents =
+    allIncidents === undefined
+      ? undefined
+      : query
+        ? allIncidents.filter((incident) => {
+            const status = incidentStatus(incident.status).label;
+            return (
+              incident.title.toLowerCase().includes(query) ||
+              status.toLowerCase().includes(query) ||
+              (incident.verdict ?? "").toLowerCase().includes(query)
+            );
+          })
+        : allIncidents;
 
   return (
-    <div className="overflow-hidden rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="flex h-12 items-center justify-between bg-neutral-50 px-4 dark:bg-neutral-900/60">
-        <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+    <Card className="overflow-hidden">
+      <CardHeader className="flex h-12 flex-row items-center justify-between gap-3 bg-muted/60 py-0">
+        <CardTitle className="text-sm font-medium text-foreground">
           API incidents
-        </h2>
+        </CardTitle>
         {incidents !== undefined ? (
-          <span className="inline-flex h-5 shrink-0 items-center rounded-[var(--rb-r-xs,4px)] bg-neutral-200/70 px-1.5 text-[11px] font-medium tabular-nums text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
+          <CardAction className="inline-flex h-5 shrink-0 items-center rounded-md bg-secondary px-1.5 text-[11px] font-medium tabular-nums text-secondary-foreground">
             {incidents.length}
-          </span>
+          </CardAction>
         ) : null}
-      </div>
+      </CardHeader>
       {incidents === undefined ? (
-        <PanelLoading rows={4} />
+        <CardContent className="p-1.5">
+          <PanelLoading rows={4} />
+        </CardContent>
       ) : incidents.length === 0 ? (
-        <PanelEmpty
-          title="No incidents yet"
-          hint="Docs changes and runtime failures will open incidents here."
-        />
+        <CardContent className="p-0">
+          <PanelEmpty
+            title={query ? `No incidents match "${search.trim()}"` : "No incidents yet"}
+            hint={
+              query
+                ? "Try a different title, status, or verdict."
+                : "Docs changes and runtime failures will open incidents here."
+            }
+          />
+        </CardContent>
       ) : (
-        <ul className="flex flex-col gap-1.5 p-1.5">
-          {incidents.map((incident) => (
-            <IncidentRowItem
-              key={incident._id}
-              incident={incident}
-              onOpen={() => onOpenIncident(incident._id)}
-            />
-          ))}
-        </ul>
+        <CardContent className="p-1.5">
+          <ul className="flex flex-col gap-1.5">
+            {incidents.map((incident) => (
+              <IncidentRowItem
+                key={incident._id}
+                incident={incident}
+                onOpen={() => onOpenIncident(incident._id)}
+              />
+            ))}
+          </ul>
+        </CardContent>
       )}
-    </div>
+    </Card>
   );
 }

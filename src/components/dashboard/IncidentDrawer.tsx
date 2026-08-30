@@ -38,21 +38,21 @@ function IncidentDrawerBody({
     <>
       <DrawerSection title="Trigger received">
         {triggers.length === 0 ? (
-          <p className="text-[13px] text-neutral-500">
+          <p className="text-[13px] text-muted-foreground">
             No trigger events recorded for this incident.
           </p>
         ) : (
           triggers.map((trigger) => (
-            <div key={trigger._id} className="rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2 dark:bg-neutral-800/50">
+            <div key={trigger._id} className="rounded-lg bg-muted px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <Pill dot={trigger.source === "runtime" ? RED_DOT : AMBER_DOT}>
                   {trigger.source === "docs" ? "Docs change" : "Runtime failure"}
                 </Pill>
-                <span className="text-[11px] tabular-nums text-neutral-500">
+                <span className="text-[11px] tabular-nums text-muted-foreground">
                   {timestampLabel(trigger.at)}
                 </span>
               </div>
-              <p className="mt-1.5 text-[13px] text-neutral-700 dark:text-neutral-300">
+              <p className="mt-1.5 text-[13px] text-foreground">
                 {trigger.summary}
               </p>
             </div>
@@ -64,26 +64,26 @@ function IncidentDrawerBody({
         {integration ? (
           <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-[13px] sm:grid-cols-2">
             <div>
-              <dt className="text-neutral-500">Provider · endpoint</dt>
-              <dd className="font-mono text-xs text-neutral-900 dark:text-neutral-100">
+              <dt className="text-muted-foreground">Provider · endpoint</dt>
+              <dd className="font-mono text-xs text-foreground">
                 {integration.provider} {integration.endpoint}
               </dd>
             </div>
             <div>
-              <dt className="text-neutral-500">Integration path</dt>
-              <dd className="font-mono text-xs text-neutral-900 dark:text-neutral-100">
+              <dt className="text-muted-foreground">Integration path</dt>
+              <dd className="font-mono text-xs text-foreground">
                 {integration.integrationPath}
               </dd>
             </div>
             <div className="sm:col-span-2">
-              <dt className="text-neutral-500">Expected contract</dt>
-              <dd className="text-neutral-700 dark:text-neutral-300">
+              <dt className="text-muted-foreground">Expected contract</dt>
+              <dd className="text-foreground">
                 {integration.expectedContract}
               </dd>
             </div>
           </dl>
         ) : (
-          <p className="text-[13px] text-neutral-500">
+          <p className="text-[13px] text-muted-foreground">
             The registered integration could not be loaded.
           </p>
         )}
@@ -105,17 +105,17 @@ function IncidentDrawerBody({
               : "No verdict yet"}
           </Pill>
           {incident.endpoint ? (
-            <span className="font-mono text-xs text-neutral-500">
+            <span className="font-mono text-xs text-muted-foreground">
               {incident.endpoint}
             </span>
           ) : null}
         </div>
         {incident.reason ? (
-          <p className="text-[13px] text-neutral-700 dark:text-neutral-300">
+          <p className="text-[13px] text-foreground">
             {incident.reason}
           </p>
         ) : (
-          <p className="text-[13px] text-neutral-500">
+          <p className="text-[13px] text-muted-foreground">
             Diagnosis has not produced a reason yet.
           </p>
         )}
@@ -123,11 +123,11 @@ function IncidentDrawerBody({
 
       <DrawerSection title="Docs evidence">
         {docChanges.length === 0 && incident.docsEvidence.length === 0 ? (
-          <p className="text-[13px] text-neutral-500">No docs evidence attached.</p>
+          <p className="text-[13px] text-muted-foreground">No docs evidence attached.</p>
         ) : (
           <>
             {docChanges.map((change) => (
-              <div key={change._id} className="rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2 dark:bg-neutral-800/50">
+              <div key={change._id} className="rounded-lg bg-muted px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <Pill dot={change.isBreaking ? RED_DOT : NEUTRAL_DOT}>
                     {change.isBreaking ? "Breaking" : "Non-breaking"}
@@ -136,24 +136,24 @@ function IncidentDrawerBody({
                     href={change.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-[11px] text-neutral-500 underline underline-offset-2 hover:text-neutral-700 dark:hover:text-neutral-300"
+                    className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
                   >
                     Source docs
                     <ExternalLink aria-hidden className="h-3 w-3" />
                   </a>
                 </div>
-                <p className="mt-1.5 text-[13px] text-neutral-700 dark:text-neutral-300">
+                <p className="mt-1.5 text-[13px] text-foreground">
                   {change.summary}
                 </p>
                 {change.affectedEndpoints.length ? (
-                  <p className="mt-1 font-mono text-[11px] text-neutral-500">
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground">
                     {change.affectedEndpoints.join(", ")}
                   </p>
                 ) : null}
               </div>
             ))}
             {incident.docsEvidence.map((line, i) => (
-              <p key={i} className="text-[13px] text-neutral-700 dark:text-neutral-300">
+              <p key={i} className="text-[13px] text-foreground">
                 {line}
               </p>
             ))}
@@ -163,12 +163,12 @@ function IncidentDrawerBody({
 
       <DrawerSection title="Adapter / code evidence">
         {incident.codeEvidence.length === 0 ? (
-          <p className="text-[13px] text-neutral-500">No code evidence attached.</p>
+          <p className="text-[13px] text-muted-foreground">No code evidence attached.</p>
         ) : (
           incident.codeEvidence.map((line, i) => (
             <pre
               key={i}
-              className="overflow-x-auto rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2 font-mono text-xs text-neutral-700 dark:bg-neutral-800/50 dark:text-neutral-300"
+              className="overflow-x-auto rounded-lg bg-muted px-3 py-2 font-mono text-xs text-foreground"
             >
               {line}
             </pre>
@@ -178,23 +178,23 @@ function IncidentDrawerBody({
 
       <DrawerSection title="Runtime corroboration">
         {errors.length === 0 ? (
-          <p className="text-[13px] text-neutral-500">
+          <p className="text-[13px] text-muted-foreground">
             No runtime failures attached to this incident.
           </p>
         ) : (
           errors.map((error) => (
-            <div key={error._id} className="rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2 dark:bg-neutral-800/50">
+            <div key={error._id} className="rounded-lg bg-muted px-3 py-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[11px] text-neutral-500">
+                <span className="font-mono text-[11px] text-muted-foreground">
                   {error.endpoint ?? "unknown endpoint"}
                   {error.statusCode ? ` · ${error.statusCode}` : ""}
                   {error.contractVersion ? ` · v${error.contractVersion}` : ""}
                 </span>
-                <span className="text-[11px] tabular-nums text-neutral-500">
+                <span className="text-[11px] tabular-nums text-muted-foreground">
                   {timestampLabel(error.at)}
                 </span>
               </div>
-              <p className="mt-1.5 text-[13px] text-neutral-700 dark:text-neutral-300">
+              <p className="mt-1.5 text-[13px] text-foreground">
                 {error.message}
               </p>
             </div>
@@ -215,7 +215,7 @@ function IncidentDrawerBody({
               <PrLink session={session} />
             </div>
             {session.testSummary ? (
-              <p className="text-[13px] text-neutral-700 dark:text-neutral-300">
+              <p className="text-[13px] text-foreground">
                 {session.testSummary}
               </p>
             ) : null}
@@ -224,7 +224,7 @@ function IncidentDrawerBody({
                 href={session.devinUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-[13px] text-neutral-600 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                className="inline-flex items-center gap-1 text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
                 Open Devin session
                 <ExternalLink aria-hidden className="h-3 w-3" />
@@ -232,7 +232,7 @@ function IncidentDrawerBody({
             ) : null}
           </>
         ) : (
-          <p className="text-[13px] text-neutral-500">
+          <p className="text-[13px] text-muted-foreground">
             No Devin session yet — repairs launch only after an impacted verdict.
           </p>
         )}
@@ -240,9 +240,9 @@ function IncidentDrawerBody({
 
       <DrawerSection title="Timeline">
         {timeline.length === 0 ? (
-          <p className="text-[13px] text-neutral-500">No events recorded.</p>
+          <p className="text-[13px] text-muted-foreground">No events recorded.</p>
         ) : (
-          <ol className="relative flex flex-col gap-3 border-l border-neutral-200 pl-4 dark:border-neutral-800">
+          <ol className="relative flex flex-col gap-3 border-l border-border pl-4">
             {timeline.map((event) => (
               <li key={event._id} className="relative">
                 <StatusDot
@@ -254,10 +254,10 @@ function IncidentDrawerBody({
                         : NEUTRAL_DOT
                   }`}
                 />
-                <p className="text-[13px] text-neutral-700 dark:text-neutral-300">
+                <p className="text-[13px] text-foreground">
                   {event.message}
                 </p>
-                <p className="mt-0.5 text-[11px] tabular-nums text-neutral-500">
+                <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
                   {timestampLabel(event.at)} · {event.sentinel}
                 </p>
               </li>

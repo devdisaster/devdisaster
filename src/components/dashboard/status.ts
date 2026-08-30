@@ -3,7 +3,7 @@
 export const AMBER_DOT = "bg-amber-500";
 export const RED_DOT = "bg-red-500";
 export const GREEN_DOT = "bg-emerald-500";
-export const NEUTRAL_DOT = "bg-neutral-300 dark:bg-neutral-600";
+export const NEUTRAL_DOT = "bg-muted-foreground";
 
 export const INCIDENT_STATUS: Record<string, { label: string; dot: string }> = {
   detected: { label: "Detected", dot: RED_DOT },

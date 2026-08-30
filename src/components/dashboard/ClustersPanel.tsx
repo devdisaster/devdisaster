@@ -6,6 +6,7 @@ import { useClusterDetail, useClusters, type ClusterRow } from "./hooks";
 import {
   clusterStatus,
   sessionStatusLabel,
+  testDot,
   AMBER_DOT,
   GREEN_DOT,
 } from "./status";
@@ -17,6 +18,14 @@ import {
   Pill,
   StatusDot,
 } from "./primitives";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 const KIND_LABEL: Record<string, string> = {
   bug: "Bug",
@@ -34,14 +43,14 @@ function ThresholdMeter({ count, threshold }: { count: number; threshold: number
         aria-valuemax={threshold}
         aria-valuenow={Math.min(count, threshold)}
         aria-label="Complaints toward threshold"
-        className="h-1.5 w-20 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800"
+        className="h-1.5 w-20 overflow-hidden rounded-full bg-muted"
       >
         <div
-          className={`h-full rounded-full ${ratio >= 1 ? "bg-amber-500" : "bg-neutral-400 dark:bg-neutral-500"}`}
+          className={`h-full rounded-full ${ratio >= 1 ? "bg-amber-500" : "bg-muted-foreground/60"}`}
           style={{ width: `${ratio * 100}%` }}
         />
       </div>
-      <span className="text-[11px] tabular-nums text-neutral-500">
+      <span className="text-[11px] tabular-nums text-muted-foreground">
         {count}/{threshold}
       </span>
     </div>
@@ -64,29 +73,29 @@ function ClusterDrawerBody({ clusterId }: { clusterId: Id<"clusters"> }) {
           <Pill>{KIND_LABEL[cluster.kind] ?? cluster.kind}</Pill>
           <ThresholdMeter count={cluster.count} threshold={cluster.threshold} />
         </div>
-        <p className="text-[13px] text-neutral-700 dark:text-neutral-300">
+        <p className="text-[13px] text-foreground">
           {cluster.summary}
         </p>
       </DrawerSection>
 
       <DrawerSection title={`Complaint evidence (${reviews.length})`}>
         {reviews.length === 0 ? (
-          <p className="text-[13px] text-neutral-500">
+          <p className="text-[13px] text-muted-foreground">
             No complaints are linked to this cluster yet.
           </p>
         ) : (
           reviews.map((review) => (
-            <div key={review._id} className="rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2 dark:bg-neutral-800/50">
+            <div key={review._id} className="rounded-lg bg-muted px-3 py-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-neutral-500">
+                <span className="text-[11px] text-muted-foreground">
                   {review.author} · {review.source}
                   {review.rating !== undefined ? ` · ${review.rating}★` : ""}
                 </span>
-                <span className="text-[11px] tabular-nums text-neutral-500">
+                <span className="text-[11px] tabular-nums text-muted-foreground">
                   {timestampLabel(review.at)}
                 </span>
               </div>
-              <p className="mt-1.5 text-[13px] text-neutral-700 dark:text-neutral-300">
+              <p className="mt-1.5 text-[13px] text-foreground">
                 {review.text}
               </p>
               {review.url ? (
@@ -94,7 +103,7 @@ function ClusterDrawerBody({ clusterId }: { clusterId: Id<"clusters"> }) {
                   href={review.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-1 inline-flex items-center gap-1 text-[11px] text-neutral-500 underline underline-offset-2 hover:text-neutral-700 dark:hover:text-neutral-300"
+                  className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
                 >
                   View source
                   <ExternalLink aria-hidden className="h-3 w-3" />
@@ -112,26 +121,25 @@ function ClusterDrawerBody({ clusterId }: { clusterId: Id<"clusters"> }) {
               <Pill dot={session.prUrl ? GREEN_DOT : AMBER_DOT}>
                 {sessionStatusLabel(session.status)}
               </Pill>
-              {session.prUrl ? (
-                <a
-                  href={session.prUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-[13px] text-neutral-900 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-500 dark:text-neutral-100 dark:decoration-neutral-600"
-                >
-                  {session.prNumber ? `PR #${session.prNumber}` : "View PR"}
-                  <ExternalLink aria-hidden className="h-3 w-3" />
-                </a>
-              ) : (
-                <span className="text-[13px] text-neutral-500">No PR yet</span>
-              )}
+              <Pill dot={testDot(session.testStatus)}>
+                Tests: {session.testStatus ?? "not reported"}
+              </Pill>
+              <a
+                href={session.prUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[13px] text-foreground underline decoration-border underline-offset-2 transition-colors hover:decoration-foreground"
+              >
+                {session.prNumber ? `PR #${session.prNumber}` : "View PR"}
+                <ExternalLink aria-hidden className="h-3 w-3" />
+              </a>
             </div>
             {session.devinUrl ? (
               <a
                 href={session.devinUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-[13px] text-neutral-600 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                className="inline-flex items-center gap-1 text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
                 Open Devin session
                 <ExternalLink aria-hidden className="h-3 w-3" />
@@ -139,7 +147,7 @@ function ClusterDrawerBody({ clusterId }: { clusterId: Id<"clusters"> }) {
             ) : null}
           </>
         ) : (
-          <p className="text-[13px] text-neutral-500">
+          <p className="text-[13px] text-muted-foreground">
             No Devin session yet — one launches when the cluster crosses its
             complaint threshold.
           </p>
@@ -162,14 +170,16 @@ function ClusterRowItem({
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full min-h-11 cursor-pointer items-start gap-2.5 rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2.5 text-left transition-colors duration-150 hover:bg-neutral-100 focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rb-accent,oklch(20.5%_0_0))] dark:bg-neutral-800/50 dark:hover:bg-neutral-800 dark:focus-visible:outline-[var(--rb-accent,oklch(100%_0_0))]"
+        className={cn(
+          "flex w-full min-h-11 cursor-pointer items-start gap-2.5 rounded-lg bg-muted px-3 py-2.5 text-left transition-colors duration-150 hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        )}
       >
         <StatusDot className={`mt-1.5 ${status.dot}`} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] text-neutral-900 dark:text-neutral-100">
+          <p className="truncate text-[13px] text-foreground">
             {cluster.title}
           </p>
-          <p className="mt-0.5 text-xs text-neutral-500">
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {status.label} · {KIND_LABEL[cluster.kind] ?? cluster.kind} ·{" "}
             {timeAgo(cluster.createdAt)}
           </p>
@@ -188,7 +198,7 @@ function ClusterRowItem({
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="inline-flex shrink-0 items-center gap-1 self-center text-[13px] text-neutral-900 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-500 dark:text-neutral-100 dark:decoration-neutral-600"
+            className="inline-flex shrink-0 items-center gap-1 self-center text-[13px] text-foreground underline decoration-border underline-offset-2 transition-colors hover:decoration-foreground"
           >
             {cluster.session.prNumber
               ? `PR #${cluster.session.prNumber}`
@@ -207,34 +217,40 @@ export function ClustersPanel() {
   const openCluster = clusters?.find((cluster) => cluster._id === openId);
 
   return (
-    <div className="overflow-hidden rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="flex h-12 items-center justify-between bg-neutral-50 px-4 dark:bg-neutral-900/60">
-        <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+    <Card className="overflow-hidden">
+      <CardHeader className="flex h-12 flex-row items-center justify-between gap-3 bg-muted/60 py-0">
+        <CardTitle className="text-sm font-medium text-foreground">
           Feedback clusters
-        </h2>
+        </CardTitle>
         {clusters !== undefined ? (
-          <span className="inline-flex h-5 shrink-0 items-center rounded-[var(--rb-r-xs,4px)] bg-neutral-200/70 px-1.5 text-[11px] font-medium tabular-nums text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
+          <CardAction className="inline-flex h-5 shrink-0 items-center rounded-md bg-secondary px-1.5 text-[11px] font-medium tabular-nums text-secondary-foreground">
             {clusters.length}
-          </span>
+          </CardAction>
         ) : null}
-      </div>
+      </CardHeader>
       {clusters === undefined ? (
-        <PanelLoading rows={3} />
+        <CardContent className="p-1.5">
+          <PanelLoading rows={3} />
+        </CardContent>
       ) : clusters.length === 0 ? (
-        <PanelEmpty
-          title="No feedback clusters yet"
-          hint="Scraped complaints will be clustered here once the feedback agent runs."
-        />
+        <CardContent className="p-0">
+          <PanelEmpty
+            title="No feedback clusters yet"
+            hint="Scraped complaints will be clustered here once the feedback agent runs."
+          />
+        </CardContent>
       ) : (
-        <ul className="flex flex-col gap-1.5 p-1.5">
-          {clusters.map((cluster) => (
-            <ClusterRowItem
-              key={cluster._id}
-              cluster={cluster}
-              onOpen={() => setOpenId(cluster._id)}
-            />
-          ))}
-        </ul>
+        <CardContent className="p-1.5">
+          <ul className="flex flex-col gap-1.5">
+            {clusters.map((cluster) => (
+              <ClusterRowItem
+                key={cluster._id}
+                cluster={cluster}
+                onOpen={() => setOpenId(cluster._id)}
+              />
+            ))}
+          </ul>
+        </CardContent>
       )}
       <Drawer
         open={openId !== null}
@@ -252,6 +268,6 @@ export function ClustersPanel() {
       >
         {openId ? <ClusterDrawerBody clusterId={openId} /> : null}
       </Drawer>
-    </div>
+    </Card>
   );
 }

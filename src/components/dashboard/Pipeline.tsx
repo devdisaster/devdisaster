@@ -40,9 +40,9 @@ function StageCard({
   return (
     <div
       className={cn(
-        "relative h-full rounded-[var(--rb-r-lg,10px)] border border-neutral-200/70 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900",
+        "relative h-full rounded-lg border bg-card p-4 text-card-foreground",
         onClick &&
-          "transition-colors duration-150 has-[button:hover]:bg-neutral-50 dark:has-[button:hover]:bg-neutral-800/50",
+          "transition-colors duration-150 has-[button:hover]:bg-muted/50",
       )}
     >
       {onClick ? (
@@ -50,12 +50,12 @@ function StageCard({
           type="button"
           onClick={onClick}
           aria-label={`Open incident details from stage: ${title}`}
-          className="absolute inset-0 cursor-pointer rounded-[var(--rb-r-lg,10px)] focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rb-accent,oklch(20.5%_0_0))] dark:focus-visible:outline-[var(--rb-accent,oklch(100%_0_0))]"
+          className="absolute inset-0 cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       ) : null}
       <div className="pointer-events-none relative">
         <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-[13px] text-neutral-500">
+          <p className="truncate text-[13px] text-muted-foreground">
             <span className="tabular-nums">{step}</span> · {title}
           </p>
           <StatusDot
@@ -77,13 +77,13 @@ function StageConnector() {
   return (
     <ChevronRight
       aria-hidden
-      className="pointer-events-none absolute top-1/2 -right-[13px] z-10 hidden h-4 w-4 -translate-y-1/2 text-neutral-300 lg:block dark:text-neutral-700"
+      className="pointer-events-none absolute top-1/2 -right-[13px] z-10 hidden h-4 w-4 -translate-y-1/2 text-border lg:block"
     />
   );
 }
 
-const line = "truncate text-[13px] text-neutral-900 dark:text-neutral-100";
-const subline = "truncate text-xs text-neutral-500";
+const line = "truncate text-[13px] text-foreground";
+const subline = "truncate text-xs text-muted-foreground";
 
 export function Pipeline({
   overview,
@@ -97,12 +97,12 @@ export function Pipeline({
       <div
         aria-busy="true"
         aria-label="Loading pipeline"
-        className="grid grid-cols-1 gap-1 rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-neutral-50 p-1 sm:grid-cols-2 lg:grid-cols-4 dark:border-neutral-800 dark:bg-neutral-950"
+        className="grid grid-cols-1 gap-1 rounded-xl border bg-muted p-1 sm:grid-cols-2 lg:grid-cols-4"
       >
         {Array.from({ length: 4 }, (_, i) => (
           <div
             key={i}
-            className="h-28 animate-pulse rounded-[var(--rb-r-lg,10px)] border border-neutral-200/70 bg-white motion-reduce:animate-none dark:border-neutral-800 dark:bg-neutral-900"
+            className="h-28 animate-pulse rounded-lg border bg-card motion-reduce:animate-none"
           />
         ))}
       </div>
@@ -147,18 +147,18 @@ export function Pipeline({
         : "active";
 
   return (
-    <div className="grid grid-cols-1 gap-1 rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-neutral-50 p-1 sm:grid-cols-2 lg:grid-cols-4 dark:border-neutral-800 dark:bg-neutral-950">
+    <div className="grid grid-cols-1 gap-1 rounded-xl border bg-muted p-1 sm:grid-cols-2 lg:grid-cols-4">
       <div className="relative">
         <StageCard step={1} title="Watching" state={watchingState}>
           {integration ? (
             <>
               <p className={line}>
                 {integration.name}
-                <span className="ml-1.5 text-neutral-500">
+                <span className="ml-1.5 text-muted-foreground">
                   · {integration.provider}
                 </span>
               </p>
-              <p className="truncate font-mono text-[11px] text-neutral-500">
+              <p className="truncate font-mono text-[11px] text-muted-foreground">
                 {integration.endpoint} · v{integration.activeContractVersion}
               </p>
               <p className={subline}>
@@ -171,7 +171,7 @@ export function Pipeline({
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-1 text-[11px] text-neutral-500 underline underline-offset-2 hover:text-neutral-700 dark:hover:text-neutral-300"
+                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
                 Watched docs
                 <ExternalLink aria-hidden className="h-3 w-3" />
