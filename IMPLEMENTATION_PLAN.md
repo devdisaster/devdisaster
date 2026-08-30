@@ -12,22 +12,24 @@
 Context.dev (scrape API + monitors)
    │ cron-pulled scrapes                  │ webhook (change.detected, HMAC-signed)
    ▼                                      ▼
-┌─ Convex backend ─────────────────────────────────────────────┐
-│ crons.ts      scrape sources every 10 min (+ "Scan now")     │
-│ ingest.ts     normalize + dedupe reviews                     │
-│ cluster.ts    Claude assigns review → cluster                │
-│ threshold.ts  cluster count ≥ N → schedule devin launch      │
-│ devin.ts      POST /v1/sessions, poll GET /sessions/{id}     │
-│ http.ts       /webhooks/context (docs sentinel)              │
-│               /ingest/errors (incident sentinel, stretch)    │
-│ schema.ts     products, reviews, clusters, sessions,         │
-│               docChanges, incidents, events                  │
-└──────────────┬────────────────────────────────────────────────┘
+┌─ Convex backend ─────────────────────────────────────────────────────┐
+│ crons.ts      scrape sources every 10 min (+ "Scan now")             │
+│ ingest.ts     normalize + dedupe reviews                             │
+│ cluster.ts    Claude assigns review → cluster                        │
+│ threshold.ts  cluster count ≥ N → schedule devin launch              │
+│ http.ts       /webhooks/context + /ingest/errors                     │
+│ incidents.ts  normalize triggers, dedupe, enforce state transitions  │
+│ docs.ts       retrieve latest docs + run impact diagnosis            │
+│ devin.ts      launch only impacted repairs; poll status/tests/PR     │
+│ schema.ts     products, integrations, reviews, clusters,             │
+│               triggerEvents, incidents, sessions, events             │
+└──────────────┬────────────────────────────────────────────────────────┘
                │ useQuery (reactive websocket)
                ▼
-   Vite + React + shadcn dashboard
+   Vite + React + ReactBits Application UI dashboard
 
-Devin ──→ GitHub org: acme-invoicing repo → PRs
+Acme integration failure ──→ Convex shared incident pipeline
+Devin ──→ GitHub org: acme-invoicing repo → tested PRs (never merge/deploy)
 ```
 
 ### Two products, one pipeline (the real-data design)
@@ -36,13 +38,13 @@ Devin ──→ GitHub org: acme-invoicing repo → PRs
 |---|---|---|
 | Role in demo | Opens the demo: "this is Sentinel on a real business" | The end-to-end story through to Devin's PR |
 | Feedback sources | REAL: Trustpilot (`country: "us"` proxy), Play Store, r/Revolut — all verified scrapeable today | REAL: **r/&lt;AcmeName&gt;** (created tonight, teammates post real complaints; live on-stage post possible). Backup: public feedback-board page in acme repo, also genuinely scraped. Final fallback: seed mutation |
-| Docs monitored | — | REAL: frankfurter.dev API docs (the currency API Acme genuinely integrates) + our controlled `vendor-docs` page (deterministic on-stage trigger) |
+| API maintenance | — | One controlled PayFlow rates contract backed by real Frankfurter data; Context.dev monitors its docs, and Acme reports runtime contract failures into the same incident flow |
 | Devin | Disabled — product row has no `repo` configured. Pipeline stops at clustering/alerting | Enabled — sessions open PRs on `acme-invoicing` |
 | Why it exists | Kills "this only works on staged data"; same code path, just a config row | Proves the closed loop |
 
-**Repos** (create at the event; org decided tonight): `sentinel` (product) and `acme-invoicing` (demo SaaS, Devin's target, Devin GitHub App installed, GitHub Pages enabled for the vendor-docs page).
+**Repos** (create at the event; org decided tonight): `sentinel` (product + controlled PayFlow routes) and `acme-invoicing` (demo SaaS, Devin's target, Devin GitHub App installed).
 
-**Component decisions:** core pipeline = plain actions + crons + `ctx.scheduler`. `@convex-dev/workflow` wraps only the Devin session lifecycle, added after the plain version works. No `@convex-dev/agent`.
+**Component decisions:** core pipeline = plain actions + crons + `ctx.scheduler`. The API-maintenance flow uses three logical roles—detection, diagnosis, and repair—but implements them as ordinary Convex functions rather than an agent framework. `@convex-dev/workflow` wraps only the Devin session lifecycle, added after the plain version works. No `@convex-dev/agent`. The dashboard starts from ReactBits Pro Application UI's operations-dashboard pattern rather than a custom layout; it is installed through the required shadcn registry tooling, then wired directly to Convex data.
 
 ---
 
@@ -68,6 +70,21 @@ export default defineSchema({
     threshold: v.number(),
   }),
 
+  integrations: defineTable({          // one Acme integration for the hackathon
+    productId: v.id("products"),
+    name: v.string(),                  // "PayFlow Currency Rates"
+    provider: v.string(),
+    docsUrl: v.string(),
+    endpoint: v.string(),
+    integrationPath: v.string(),       // expected customer-code location
+    expectedContract: v.string(),      // concise customer-expected response contract
+    activeContractVersion: v.union(v.literal("v1"), v.literal("v2")),
+    cachedEurRate: v.optional(v.number()),
+    testCommand: v.string(),
+    monitorId: v.optional(v.string()),
+    enabled: v.boolean(),
+  }).index("by_product", ["productId"]).index("by_monitor", ["monitorId"]),
+
   reviews: defineTable({
     productId: v.id("products"),
     source: v.union(v.literal("play"), v.literal("trustpilot"), v.literal("reddit"),
@@ -91,48 +108,82 @@ export default defineSchema({
     sessionId: v.optional(v.id("sessions")),
   }).index("by_product", ["productId"]),
 
-  sessions: defineTable({              // Devin sessions
+  sessions: defineTable({              // Devin agent runs
     productId: v.id("products"),
     trigger: v.union(v.literal("feedback"), v.literal("docs"), v.literal("incident")),
     clusterId: v.optional(v.id("clusters")),
+    incidentId: v.optional(v.id("incidents")),
     devinSessionId: v.string(),
     devinUrl: v.string(),
     status: v.string(),                // mirror of status_enum
+    testStatus: v.optional(v.union(v.literal("passed"), v.literal("failed"), v.literal("unknown"))),
+    testSummary: v.optional(v.string()),
     prUrl: v.optional(v.string()),
+    prNumber: v.optional(v.number()),
     prompt: v.string(),
     structuredOutput: v.optional(v.any()),
-  }).index("by_devin_id", ["devinSessionId"]).index("by_product", ["productId"]),
+  }).index("by_devin_id", ["devinSessionId"]).index("by_product", ["productId"]).index("by_incident", ["incidentId"]),
+
+  triggerEvents: defineTable({
+    productId: v.id("products"),
+    integrationId: v.id("integrations"),
+    source: v.union(v.literal("docs"), v.literal("runtime")),
+    fingerprint: v.string(),           // integration + endpoint + observed contract version
+    summary: v.string(),
+    raw: v.any(),
+    incidentId: v.optional(v.id("incidents")),
+  }).index("by_fingerprint", ["fingerprint"]).index("by_incident", ["incidentId"]),
 
   docChanges: defineTable({
     productId: v.id("products"),
+    integrationId: v.id("integrations"),
     monitorId: v.string(),
     url: v.string(),
     summary: v.string(),
     isBreaking: v.boolean(),
+    affectedEndpoints: v.array(v.string()),
     raw: v.any(),
-    sessionId: v.optional(v.id("sessions")),
-  }).index("by_product", ["productId"]),
+    incidentId: v.optional(v.id("incidents")),
+  }).index("by_product", ["productId"]).index("by_incident", ["incidentId"]),
 
-  incidents: defineTable({             // Phase 7 (stretch)
+  incidents: defineTable({
     productId: v.id("products"),
+    integrationId: v.id("integrations"),
+    fingerprint: v.string(),
     title: v.string(),
-    errorCount: v.number(),
-    status: v.union(v.literal("detected"), v.literal("fixing"), v.literal("pr_open"), v.literal("resolved")),
+    status: v.union(
+      v.literal("detected"), v.literal("gathering_context"), v.literal("diagnosing"),
+      v.literal("not_impacted"), v.literal("needs_review"), v.literal("repair_queued"),
+      v.literal("repairing"), v.literal("validating"), v.literal("repair_proposed"),
+      v.literal("repair_failed"),
+    ),
+    diagnosisVerdict: v.optional(v.union(v.literal("impacted"), v.literal("not_impacted"), v.literal("uncertain"))),
+    diagnosisReason: v.optional(v.string()),
+    affectedEndpoint: v.optional(v.string()),
+    diagnosisEvidence: v.optional(v.array(v.string())),
+    codeEvidence: v.optional(v.array(v.string())),
     sessionId: v.optional(v.id("sessions")),
-  }).index("by_product", ["productId"]),
+  }).index("by_product", ["productId"]).index("by_fingerprint", ["fingerprint"]),
 
-  errors: defineTable({                // Phase 7 (stretch)
+  errors: defineTable({
     productId: v.id("products"),
+    integrationId: v.id("integrations"),
     message: v.string(),
     stack: v.optional(v.string()),
-  }).index("by_product", ["productId"]),
+    endpoint: v.optional(v.string()),
+    statusCode: v.optional(v.number()),
+    contractVersion: v.optional(v.string()),
+    fingerprint: v.string(),
+    incidentId: v.optional(v.id("incidents")),
+  }).index("by_product", ["productId"]).index("by_incident", ["incidentId"]),
 
   events: defineTable({                // war-room feed — EVERY state change posts here
     productId: v.id("products"),
+    incidentId: v.optional(v.id("incidents")),
     sentinel: v.string(),              // "feedback" | "docs" | "incident" | "system"
     message: v.string(),
     level: v.union(v.literal("info"), v.literal("warn"), v.literal("critical")),
-  }).index("by_product", ["productId"]),
+  }).index("by_product", ["productId"]).index("by_incident", ["incidentId"]),
 });
 ```
 
@@ -148,7 +199,7 @@ Launch — `POST https://api.devin.ai/v1/sessions`, header `Authorization: Beare
   "title": "Sentinel: <cluster title>",
   "structured_output_schema": {
     "type": "object",
-    "properties": { "pr_url": {"type": "string"}, "summary": {"type": "string"}, "root_cause": {"type": "string"} }
+    "properties": { "pr_url": {"type": "string"}, "summary": {"type": "string"}, "root_cause": {"type": "string"}, "tests_passed": {"type": "boolean"}, "test_summary": {"type": "string"} }
   }
 }
 ```
@@ -179,7 +230,7 @@ You are fixing a bug in the repository {org}/{repo}. Work on a new branch and op
 Keep the diff small. If you cannot find the bug, open a draft PR documenting your investigation instead.
 ```
 
-Docs-sentinel variant: replace Evidence with the docs-change summary + name the integration file (`src/lib/frankfurter.ts` or wherever Phase 5 puts it).
+API-maintenance variant: launch only when the linked incident has `diagnosisVerdict: "impacted"`. Replace Evidence with the incident packet: trigger source(s), sanitized runtime error if present, Context.dev change summary, latest docs excerpt/URL, affected endpoint/schema/version, registered integration path and expected contract, diagnosis reason, expected behavior, and test command. Instruct Devin to inspect the repository, make the smallest integration-only change, update or add a regression test, run the named test command, and open a PR. Explicitly prohibit merge and deployment. If the evidence is insufficient or the code is not affected, report that instead of forcing a patch.
 
 ### R4. Context.dev scraping API (verified)
 
@@ -198,17 +249,17 @@ Create once per docs URL (Phase 3):
 
 ```json
 {
-  "name": "frankfurter-api-docs",
+  "name": "payflow-api-docs",
   "mode": "web",
-  "target": { "type": "page", "url": "https://frankfurter.dev/",
-    "instructions": "Report changes to API endpoints, parameters, response fields, base URLs, or deprecations. Ignore cosmetic or wording-only changes." },
+  "target": { "type": "page", "url": "https://{deployment}.convex.site/demo/vendor/docs",
+    "instructions": "Report changes to API endpoints, versions, parameters, or response fields. Ignore cosmetic or wording-only changes." },
   "change_detection": { "type": "semantic", "confidence_threshold": 0.7 },
   "schedule": { "type": "interval", "frequency": 10, "unit": "minutes" },
   "webhook": { "url": "https://{deployment}.convex.site/webhooks/context", "events": ["change.detected"] }
 }
 ```
 
-Second monitor: same shape targeting the controlled vendor-docs page (Phase 5). Min interval 10 min → **use run-monitor-now for on-demand demo triggering**. Webhook signature: header `X-Context-Signature: t=<unix>,v1=<hmac>`, HMAC-SHA256 over `"{t}.{rawBody}"` keyed by the `secret` returned at creation; verify with constant-time compare, reject stale timestamps.
+Use one monitor for the controlled PayFlow docs. The minimum interval is 10 minutes, so use **run-monitor-now** for the on-demand demo. Webhook signature: header `X-Context-Signature: t=<unix>,v1=<hmac>`, HMAC-SHA256 over `"{t}.{rawBody}"` keyed by the `secret` returned at creation; verify with constant-time compare and reject stale timestamps.
 
 ### R6. Claude calls (Anthropic API, model `claude-haiku-4-5`)
 
@@ -225,17 +276,47 @@ Return JSON: {"action": "attach"|"create"|"ignore", "clusterId": "...",
 ```
 Apply result in one mutation: attach/create, increment count, threshold check → schedule `devin.launch` (only if product has `repo`), flip status, post `events` row.
 
-**Docs-change analysis** (Phase 3): webhook payload diff → `{isBreaking: bool, summary, affectedEndpoints[]}`.
+**API impact diagnosis** (Phase 3): combine the proactive docs diff or reactive error with the `integrations` row, the latest docs retrieved through Context.dev, and the current contents of the configured integration file from Acme's public GitHub repo. Return `{verdict: "impacted"|"not_impacted"|"uncertain", confidence, summary, affectedEndpoints[], contractChange, codeEvidence[], evidence[]}`. Before the model call, deterministically check whether the changed endpoint/version overlaps the registered endpoint; after the call, require evidence naming both the changed contract element and matching code usage. If the configured file cannot be retrieved, return `uncertain` instead of guessing. `not_impacted` stops without Devin, `uncertain` becomes `needs_review`, and only `impacted` schedules a repair.
 
 ### R7. Env vars (per Convex deployment, set via dashboard)
 
-`DEVIN_API_KEY` · `ANTHROPIC_API_KEY` · `CONTEXT_API_KEY` · `CONTEXT_WEBHOOK_SECRET` (after Phase 3 creates monitors) · `GITHUB_ORG` (name only, no token needed — Devin's GitHub App handles repo access). Frankfurter needs **no key**.
+`DEVIN_API_KEY` · `ANTHROPIC_API_KEY` · `CONTEXT_API_KEY` · `CONTEXT_WEBHOOK_SECRET` (after Phase 3 creates monitors) · `SENTINEL_INGEST_TOKEN` (shared only with Acme) · `GITHUB_ORG` (name only, no token needed—Devin's GitHub App handles repo access). Frankfurter needs **no key**.
+
+### R8. Shared API-maintenance incident flow
+
+Both ingress paths call the same `incidents.receiveTrigger` mutation:
+
+```
+Context docs webhook ─┐
+                      ├─→ detected → gathering_context → diagnosing
+Runtime failure ──────┘                                  │
+                         ┌────────────────────────────────┼──────────────────────┐
+                         ▼                                ▼                      ▼
+                    not_impacted                    needs_review          repair_queued
+                                                                               │
+                                                                               ▼
+                                                                          repairing
+                                                                               │
+                                                                               ▼
+                                                                          validating
+                                                                    ┌──────────┴──────────┐
+                                                                    ▼                     ▼
+                                                              repair_failed        repair_proposed
+```
+
+1. Normalize the input into `triggerEvents`; sanitize runtime payloads before storage.
+2. Find or create an incident using `integrationId + affected endpoint + observed contract version` as the fingerprint. Both PayFlow responses include a version, so docs and runtime triggers for v2 converge deterministically. If the other trigger already opened the incident, attach evidence rather than launching a second repair.
+3. Load the integration registration, retrieve the latest docs via Context.dev, and fetch only the configured integration file from Acme's public GitHub repo. Store the evidence needed for the incident, not an unnecessary second knowledge system or full repo index.
+4. Run R6 diagnosis against the changed contract and actual code usage. `not_impacted` stops, `uncertain` requires human review, and `impacted` schedules Devin.
+5. Build the R3 evidence packet and launch Devin. Poll status into `sessions`; record test outcome and PR metadata.
+6. A finished run with a PR becomes `repair_proposed`, not `resolved`. Human review/merge is the default, and Sentinel never auto-deploys.
+7. Write an `events` row for every transition so the dashboard can render one auditable incident timeline.
 
 ---
 
 ## §P. Phases
 
-Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretch)**. P3 needs P5's vendor-docs page URL to finish (stub it until then); P1's live test needs P5's repo to exist (use a README-only repo created in P0).
+Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretch)**. P3 and P5 share the PayFlow contract from R1/R8: P3 owns the controlled API/docs and incident spine; P5 owns Acme's adapter/error reporting/tests. Stub their typed boundary in P0 so both proceed in parallel. P1's live test needs P5's repo to exist (use a README-only repo created in P0).
 
 ---
 
@@ -246,12 +327,12 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 **Deliverables**
 1. GitHub org repos created: `sentinel`, `acme-invoicing` (README-only for now). Devin GitHub App covers both (installed org-wide tonight).
 2. `npm create convex@latest sentinel` (Vite + React) → pushed. Everyone clones; each runs `npx convex dev` (personal dev deployment); hot reload verified on all 3 laptops.
-3. **`convex/schema.ts` exactly as R1** + stub files with exported, typed, `throw new Error("todo")` function signatures: `ingest.ts`, `cluster.ts`, `threshold.ts`, `devin.ts`, `http.ts`, `crons.ts`, `seed.ts`. Committed and pushed before anyone splits off.
+3. **`convex/schema.ts` exactly as R1** + stub files with exported, typed, `throw new Error("todo")` function signatures: `ingest.ts`, `cluster.ts`, `threshold.ts`, `incidents.ts`, `docs.ts`, `devin.ts`, `http.ts`, `crons.ts`, `seed.ts`. Committed and pushed before anyone splits off.
 4. Env vars (R7) set in every dev deployment + prod.
-5. `npx shadcn@latest init` in the frontend.
-6. Two product rows inserted (via a `seed.setupProducts` mutation): Revolut (observer — playStoreId `com.revolut.revolut`, trustpilotDomain `revolut.com`, subreddit `Revolut`, **no repo**) and Acme Invoicing (repo `org/acme-invoicing`, subreddit `<AcmeName>`, docsUrls `[frankfurter.dev, <vendor-docs URL when live>]`, threshold 5).
+5. Confirm the team has a ReactBits Pro or Ultimate license. Run `npx shadcn@latest init` because ReactBits Application UI uses the shadcn registry protocol, register `@reactbits-pro` in `components.json` per the official installation guide, then install the operations dashboard with `npx shadcn@latest add @reactbits-pro/dashboard-4`. Keep the license key only in local `.env.local`; never commit it. Do not install extra templates until Dashboard 4 is wired.
+6. Two product rows inserted (via a `seed.setupProducts` mutation): Revolut (observer — playStoreId `com.revolut.revolut`, trustpilotDomain `revolut.com`, subreddit `Revolut`, **no repo**) and Acme Invoicing (repo `org/acme-invoicing`, subreddit `<AcmeName>`, threshold 5). Insert one Acme `integrations` row with the controlled rates endpoint, docs URL placeholder, expected response contract, integration path, and test command.
 
-**Acceptance:** all 3 laptops render the scaffold with their own deployment; `schema.ts` + stubs on main; both product rows visible in Convex dashboard data browser.
+**Acceptance:** all 3 laptops render the ReactBits Dashboard 4 scaffold against their own deployment; `schema.ts` + stubs are on main; both product rows and the single Acme integration row are visible in the Convex data browser; no license key is tracked by Git.
 
 ---
 
@@ -262,8 +343,8 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 **Prereqs:** P0. Uses R2, R3.
 
 **Deliverables**
-1. `devin.launch` internalAction: builds prompt (R3) from cluster/docChange evidence, POSTs R2 launch, writes `sessions` row + `events` row. Guard: skip + log event if product has no `repo` (observer mode).
-2. `devin.poll` internalAction on a 20s cron (only while any session `status ∈ {working, blocked, resumed}`): GET status, update row, capture `pull_request.url` → also update the linked cluster/docChange to `pr_open` + post event. Auto-nudge on `blocked` (R2).
+1. `devin.launch` internalAction: builds an R3 prompt from cluster evidence or an already-impacted API incident, POSTs R2 launch, writes `sessions` + `events`. Guard: skip and log if the product has no repo; for API maintenance, also reject any incident not in `repair_queued` with `diagnosisVerdict: "impacted"`.
+2. `devin.poll` internalAction on a 20s cron (only while any session `status ∈ {working, blocked, resumed}`): GET status, update the run, and capture structured test outcome plus `pull_request.url`. Feedback runs update the linked cluster; API runs advance `repairing → validating → repair_proposed` only when a PR exists and tests pass. A missing PR or failed test becomes `repair_failed`. Auto-nudge on `blocked` (R2).
 3. `threshold.check` mutation: on cluster count increment, if `count >= product.threshold && status === "open"` → set `triggered`, post event, `ctx.scheduler.runAfter(0, internal.devin.launch, ...)`.
 4. **Smoke test (do this before building 2–3):** manually run `devin.launch` with prompt "Add a LICENSE file to {org}/acme-invoicing and open a PR" → confirm PR URL lands in the table. **This is the 12:00 hard checkpoint.**
 5. After 1–4 work: wrap launch→poll→record in `@convex-dev/workflow` (durable retries; the "Convex Workflow orchestrates Devin" judging point).
@@ -296,62 +377,66 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 
 ---
 
-### Phase 3 — Docs Sentinel *(Iyad after P1 core lands — it reuses `devin.launch`; or split with Shashwat; ref 13:30–15:00)*
+### Phase 3 — API Integration Maintainer *(Docs Sentinel + shared incident spine; Iyad after P1 core lands, ref 13:30–15:00)*
 
-**Objective:** a docs change on a monitored page becomes a Devin PR with no human in the loop.
+**Objective:** proactive docs changes and reactive integration failures enter one incident flow that proves customer-code impact before Devin opens a tested repair PR.
 
-**Prereqs:** P0; P1 `devin.launch`; P5.3 vendor-docs page URL (use frankfurter.dev-only until it exists). Uses R5, R6.
+**Prereqs:** P0; P1 `devin.launch`; P5 controlled vendor endpoint, docs URL, Acme integration path, and regression test. Uses R5, R6, R8.
 
 **Deliverables**
-1. `http.ts` route `POST /webhooks/context`: verify `X-Context-Signature` HMAC (R5), parse payload, store `docChanges` row, post event.
-2. Claude breaking-change analysis (R6) on the payload → set `isBreaking`, `summary`.
-3. If `isBreaking` → `ctx.scheduler.runAfter(0, internal.devin.launch, {trigger: "docs", ...})` with the R3 docs variant prompt.
-4. Create two monitors (R5): real frankfurter.dev docs + the controlled vendor-docs page. Store monitor ids + webhook secret (`CONTEXT_WEBHOOK_SECRET` env var).
-5. Demo trigger procedure documented in-repo: edit vendor-docs page → push → call run-monitor-now → webhook within ~seconds.
+1. `POST /webhooks/context`: verify `X-Context-Signature` HMAC (R5), resolve the integration by `monitorId`, persist `docChanges` + a `docs` trigger event, then call `incidents.receiveTrigger`.
+2. `POST /ingest/errors`: require `Authorization: Bearer $SENTINEL_INGEST_TOKEN`; accept `productId`, `integrationId`, endpoint, observed contract version, message, optional stack/status code; strip headers, request bodies, and query values, enforce a small payload limit, then persist `errors` + a `runtime` trigger event and call the same `incidents.receiveTrigger`. No general log pipeline or spike detector in core.
+3. `incidents.receiveTrigger`: dedupe using the R8 fingerprint, create or attach to an incident, and emit every state transition to `events`. A second trigger adds evidence and never launches a duplicate repair.
+4. `docs.gatherAndDiagnose`: retrieve the latest docs through Context.dev and the configured integration file from Acme's public GitHub repo; combine those with the trigger, registered endpoint/contract/path, and existing evidence, then run R6 impact diagnosis. Do not crawl or index the repository.
+5. Apply the impact gate: `not_impacted` stops; `uncertain` becomes `needs_review`; `impacted` becomes `repair_queued` and schedules `devin.launch` with the R3 API-maintenance packet.
+6. Extend `devin.poll` to save test results and PR metadata and advance the incident through `repairing → validating → repair_proposed`. Never merge or deploy.
+7. Build public PayFlow demo routes: `GET /demo/vendor/rates` proxies or reads cached Frankfurter rates and shapes them according to a Convex-stored `v1|v2` flag; `GET /demo/vendor/docs` renders the matching contract. Add reset-to-v1 and activate-v2 mutations. Keep a cached rate fallback so vendor availability does not control the demo.
+8. Create one Context.dev monitor for the controlled docs, store its ID on the `integrations` row, and store its webhook secret in the environment. Dashboard controls may reset v1, activate the single v2 break, run the monitor now, and call the Acme integration, but must exercise real handlers rather than directly editing incident state.
 
-**Files:** `convex/http.ts`, `convex/docs.ts`, monitor-creation script or dashboard notes.
+**Files:** `convex/http.ts`, `convex/incidents.ts`, `convex/docs.ts`, `convex/devin.ts`, monitor-creation script or dashboard notes.
 
-**Acceptance:** editing the vendor-docs page and running the monitor produces: webhook received + verified → docChange row with breaking summary → Devin session launched → event feed shows the chain.
+**Acceptance:** the controlled docs change produces `detected → gathering_context → diagnosing → repair_queued → repairing → validating → repair_proposed`, with diagnosis evidence, a passing regression test, and a real Devin PR. Running the broken integration independently enters the same flow; running it during the proactive incident attaches evidence without creating a second session.
 
 ---
 
 ### Phase 4 — Dashboard *(Moein; ref 11:15–15:00)*
 
-**Objective:** the demo surface — everything above, live and legible.
+**Objective:** adapt ReactBits Application UI into the live demo surface instead of designing dashboard chrome from scratch.
 
-**Prereqs:** P0 (schema + stubs). Build against hand-inserted rows first; every panel is a `useQuery` so real data appears as P1–P3 land. No blocking dependencies.
+**Prereqs:** P0 has installed ReactBits Pro `dashboard-4`, the operations-dashboard template with a service status board and incident list. Build against hand-inserted rows first; every data region becomes a Convex `useQuery` so P1–P3 results appear without refresh.
 
 **Deliverables**
-1. Product switcher (Revolut / Acme) — observer products show a "monitoring only" badge where Devin panels would be.
-2. Panels: **war-room feed** (events; sentinel avatars, severity colors — the "agents talking" surface) · **clusters** with threshold meters + status pills · cluster detail drawer (evidence = actual review texts w/ source badges + link out) · **Devin sessions timeline** (status → PR link button) · **docs monitors** panel (watched URLs, last change, breaking badge).
-3. Onboarding form ("Connect your product": name, description, repo, sources, docs URLs, threshold) → products insert. This is what makes it read as a product, not a demo.
-4. Demo controls (tasteful): Scan now · Seed complaints · Force threshold.
-5. Empty/loading states (`useQuery` returns `undefined` first — handle it everywhere).
+1. Preserve the ReactBits app shell, responsive layout, spacing, typography, status treatments, and card/list primitives. Remove example branding and static demo metrics; do not build a second design system or add charts without useful data.
+2. Adapt the template's service selector/status board into the Revolut/Acme product switcher and integration-health summary. Observer products show a clear "monitoring only" badge where repair actions would appear.
+3. Adapt the incident list into two concise views: **Feedback clusters** with threshold/status and **API incidents** with trigger source, impact verdict, repair state, and PR status.
+4. Add one detail drawer using the installed primitives for the auditable timeline: trigger received → context gathered → impact evidence → Devin state → test result → PR link. The same drawer shows complaint evidence or API code/docs evidence without adding another route.
+5. Add the onboarding form for product/repo/feedback fields and one optional API integration. Use the installed ReactBits/shadcn primitives; install another Application UI block only if the form cannot be assembled quickly from what Dashboard 4 already provides.
+6. Add restrained demo controls: Scan now · Seed complaints · Force threshold · Reset vendor · Activate v2 break · Run integration. Keep them visually separated from normal product actions.
+7. Replace every template array/placeholder with Convex data or an explicit empty/loading state. Treat `useQuery === undefined` as loading and preserve the template's responsive behavior.
 
-**Files:** `src/` (components, routes), no backend files.
+**Files:** installed ReactBits source under `src/` plus the dashboard page and small data-mapping components; no backend files.
 
-**Acceptance:** with both products populated, a stranger can follow complaint → cluster → threshold → Devin → PR without narration; observer vs full-loop distinction is visually obvious.
+**Acceptance:** Dashboard 4's original sample data is gone; both products render from Convex; a stranger can follow complaint → cluster → Devin → PR and API trigger → impact verdict → tests → repair PR; mobile/desktop layouts remain usable; no ReactBits license credential is bundled or committed.
 
 ---
 
-### Phase 5 — Demo assets: Acme repo + docs pages *(Ash, driven through Devin chat; ref 11:15–14:30)*
+### Phase 5 — Demo assets: Acme repo + controlled vendor *(Ash, driven through Devin chat; ref 11:15–14:30)*
 
-**Objective:** everything Devin fixes and Context watches for the Acme story. Built by prompting Devin interactively — which is itself demo-able "meaningful Devin usage."
+**Objective:** everything Devin fixes and Context watches for the Acme story. Built by prompting Devin interactively—which is itself demo-able meaningful Devin usage.
 
-**Prereqs:** P0 (repo exists). Coordinate bug list wording with Phase 2.6's real subreddit posts.
+**Prereqs:** P0 (repo exists). Coordinate feedback bug wording with Phase 2.6 and the API contract with Phase 3.
 
 **Deliverables**
-1. Devin scaffolds `acme-invoicing`: small Vite/Next invoicing app — invoice list, create invoice, **multi-currency amounts converted via the real Frankfurter API** (`https://api.frankfurter.dev/v1/latest?base=USD&symbols=...`, no key), CSV export. Strong `README.md` + `AGENTS.md` (what it is, stack, how to run/test).
-2. **Planted bugs (2–3, small, greppable, visibly fixable):**
-   - CSV export drops the header row (or writes semicolons as delimiters).
-   - Currency conversion inverts the rate for one direction (EUR→USD shows USD→EUR).
-   - Login/email field rejects addresses containing `+`.
-3. **Vendor-docs page (the controlled trigger):** `docs/vendor-api.html` on GitHub Pages, styled as "PayFlow Partner API docs", documenting an endpoint/config the app actually reads (e.g. the exchange-rate endpoint path or a fee table baked into `src/lib/vendor.ts`). Demo = rename the endpoint on the page + push.
-4. **Feedback board (Acme's backup source):** `/feedback` page in the deployed Acme app (or a GitHub Pages page) listing user-submitted complaints, publicly reachable so Context can scrape it. Simple client-side form + serialized list is fine.
-5. Deploy Acme (Vercel) so the app + board + docs pages are live URLs.
-6. Submission-form answers drafted (PRD has partner-usage texts), 3-min script (§D), disclosure list, backup-video shot list.
+1. Devin scaffolds `acme-invoicing`: small Vite/Next invoicing app—invoices, CSV export, and multi-currency totals through one isolated `src/lib/payflow.ts` adapter. PayFlow is a controlled rates API backed by real Frankfurter data, so the upstream values are realistic while the response contract is deterministic. Include a strong `README.md` + `AGENTS.md` with run/test commands.
+2. Keep the existing small feedback bugs for Feedback Sentinel (CSV header and one optional form/rate bug); do not add more. The API-maintenance story uses one separate controlled contract break.
+3. **Controlled PayFlow contract:** Sentinel's Convex HTTP routes expose a public rates endpoint and matching docs page. v1 returns `{version: "v1", base, rates: {EUR: 0.86}}`; one demo mutation switches both endpoint and docs to v2 returning `{version: "v2", base, data: [{currency: "EUR", rate: 0.86}]}`. Acme can report the observed version but continues expecting `rates`, producing a genuine adapter failure.
+4. Wrap the PayFlow adapter with runtime validation/error handling. On contract failure, send a sanitized event to Sentinel's `/ingest/errors`; show a stable user-facing error rather than crashing the app.
+5. Add adapter tests with a v1 fixture and clear test command. The Devin incident packet supplies the v2 docs/response evidence and requires a v2 regression test in the repair PR.
+6. Keep the **feedback board** as Acme's backup Feedback Sentinel source, publicly reachable through the deployed app.
+7. Deploy Acme and the Sentinel Convex HTTP routes so the app, controlled API, docs, and feedback board have stable public URLs.
+8. Draft submission answers, the 3-minute script (§D), disclosure list, and backup-video shot list.
 
-**Acceptance:** repo builds & deploys; all three bugs reproduce; vendor-docs + feedback pages publicly reachable; a cold Devin session given only the repo can locate bug #1 (that's exactly what P1's smoke test evolves into).
+**Acceptance:** Acme builds and deploys; feedback bugs reproduce; v1 currency conversion works; activating v2 causes a real, captured adapter failure; the docs page reflects v2; and a cold Devin session given the incident packet can patch the adapter, add the regression test, pass the suite, and open a PR without touching the vendor.
 
 ---
 
@@ -363,8 +448,8 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 
 **Deliverables**
 1. Pick ONE deployment as demo-prod (`npx convex deploy` or a designated dev deployment); env vars + monitors pointed at it.
-2. Two full end-to-end rehearsals: Revolut observer view → Acme reddit post → scan → cluster → threshold → Devin PR → vendor-docs edit → run-monitor-now → second session.
-3. Pre-warm strategy: launch a real session ~30 min before judging so a **finished PR** exists to show; the live-triggered one runs during the talk. Keep the best rehearsal PR as backup exhibit.
+2. Two full end-to-end rehearsals: Revolut observer view → Acme feedback trigger → Devin PR → reset PayFlow v1 → activate the v2 contract/docs → run Context monitor → impact verdict → Devin session → passing test + repair PR. Separately verify that the Acme runtime failure enters or attaches to the same incident.
+3. Pre-warm strategy: launch a real API-repair session about 30 minutes before judging so a **finished tested PR** exists to show; the live-triggered one runs during the talk. Keep the best rehearsal PR as backup evidence.
 4. Record backup video (rules allow it).
 5. Morning-cached Revolut data verified present.
 6. **16:30: submit.** Deadline 17:00 is strict.
@@ -373,19 +458,19 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 
 ---
 
-### Phase 7 — Incident Sentinel *(STRETCH — only if P1–P5 green at the 15:00 checkpoint)*
+### Phase 7 — Reactive incident hardening *(STRETCH — only if P1–P5 green at the 15:00 checkpoint)*
 
-**Objective:** "break production" live on stage; the third time-horizon (real-time).
+**Objective:** add production-style grouping and presentation on top of Phase 3's already-working single runtime-failure trigger.
 
-**Prereqs:** P1 (Devin engine), P4 (dashboard), P5 (Acme deployed).
+**Prereqs:** P3 shared incident flow, P4 dashboard, P5 Acme deployed.
 
 **Deliverables**
-1. `http.ts` route `POST /ingest/errors` (productId, message, stack) → `errors` rows.
-2. Spike rule (mutation on insert): ≥10 errors/2 min → create `incidents` row, post critical event, launch Devin (`trigger: "incident"`, prompt includes error messages + stack).
-3. Acme "break production" button: sets a flag making a core action throw; errors stream to the endpoint.
-4. Dashboard incident banner (red) + incident feed with live status updates.
+1. Group repeated runtime events by integration and fingerprint; show count and first/last seen without creating additional incidents or Devin sessions.
+2. Add an optional spike policy (for example, 10 matching failures in 2 minutes) as a severity escalation only. It must not bypass diagnosis or the impact gate.
+3. Add a red incident banner and clearer live feed treatment for confirmed runtime impact.
+4. Add a safe demo control that calls the changed PayFlow integration and surfaces its genuine failure; do not add a generic flag that makes unrelated application code throw.
 
-**Acceptance:** pressing the button on deployed Acme produces a declared incident + Devin hotfix session within ~30s.
+**Acceptance:** repeated calls to the broken PayFlow integration update one incident in real time, preserve the docs evidence and diagnosis, and produce at most one repair session.
 
 ---
 
@@ -407,9 +492,9 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 1. **(0:00)** "Every team has three streams of bug reports they ignore: reviews, upstream docs, production errors. We built the team that reads them — and fixes them." **Open on Revolut**: real Trustpilot/Play/Reddit complaints, clustered live. "This is Sentinel watching a real business, today. Now here's what happens when Sentinel also has your repo."
 2. **(0:45)** **Switch to Acme.** Post a real complaint on r/&lt;AcmeName&gt; (or show this morning's real posts) → Scan now → clustering live → "CSV export broken" hits 5/5 → Devin session card appears.
 3. **(1:30)** Cut to the pre-warmed session's **open PR on GitHub**: diff fixing the exact bug, PR body citing the user complaints. "Complaint to reviewable fix, zero humans."
-4. **(2:00)** Docs Sentinel: Acme really integrates the Frankfurter currency API — monitor on their real docs. Edit our vendor's docs page (rename endpoint) → run monitor → webhook lights the feed → second Devin session spawns. "It catches breakage *before* production does."
-5. **(2:30, if P7 built)** Press **Break production** → red banner, incident declared, hotfix session live.
-6. **(2:45)** "Context.dev is the senses, Convex is the nervous system, Devin is the hands. A sentinel is a signal + a trigger + a mandate — CVEs, status pages, logs are next."
+4. **(2:00)** API Integration Maintainer: activate PayFlow v2 and run the Context.dev monitor → signed webhook creates an incident → latest docs arrive → timeline names the changed response field and proves Acme uses it → Devin session launches. Cut to the pre-warmed API PR with the adapter diff and passing regression test. "It does not patch every docs change; it proves impact first."
+5. **(2:35)** Run Acme's now-broken integration → the genuine runtime failure appears as a second trigger on the same incident, not a duplicate repair. If time is tight, show this event already attached from rehearsal.
+6. **(2:50)** "Context.dev is the senses, Convex is the control plane, and Devin is the hands: detect, understand, contextualize, validate, remediate. The output is a reviewable PR—not an automatic deployment."
 
 ## §K. Risks
 
@@ -420,11 +505,15 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 | New subreddit auto-filtered | Aged account creates it tonight + test post tonight; backup = feedback board (P5.4, same pipeline); final fallback = seeds |
 | Venue wifi kills live scraping | Morning-cached Revolut data; Acme reddit posts made in the morning; seeds |
 | Trustpilot proxy needs paid Context tier | Reddit + Play still real for Revolut; ask rep at opening |
+| ReactBits Pro registry/license unavailable | Verify Pro/Ultimate access before Phase 0; install Dashboard 4 immediately; never commit the local license key |
 | Threshold doesn't fire on stage | `forceThreshold` admin button |
-| Devin fixes the wrong thing | Small greppable bugs; "minimal diff" prompt; two rehearsals |
+| Devin fixes the wrong thing | Isolated `payflow.ts` adapter, explicit v1/v2 evidence, required regression test, minimal-diff prompt, two rehearsals |
+| Docs change is irrelevant | Deterministic endpoint overlap + structured impact verdict; `not_impacted` stops before Devin |
+| Proactive and reactive triggers duplicate work | Shared fingerprint and one incident/session guard; second trigger only appends evidence |
+| Context monitor is slow during judging | Pre-run a real monitor event; keep Run Monitor Now control, persisted incident timeline, and backup video |
 | Devin `blocked` mid-session | Auto-nudge (P1.2) |
 | Merge conflicts | Schema+stubs first; phases own disjoint files; frequent small pushes |
-| Time overrun | 15:00 cut line for P7; demo survives on Feedback Sentinel alone if P3 dies |
+| Time overrun | Cut P7 grouping/polish; retain Phase 3's proactive path and single reactive event through the shared spine |
 
 ## §C. Cost guards
 
