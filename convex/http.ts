@@ -1,9 +1,24 @@
 import { httpRouter } from "convex/server";
+import { handleDocs, handlePaymentIntents } from "./vendor";
 
 const http = httpRouter();
 
-export async function handleRequest(_request: Request): Promise<never> {
-  throw new Error("todo");
-}
+http.route({
+  path: "/demo/stripe/v1/payment_intents",
+  method: "POST",
+  handler: handlePaymentIntents,
+});
+
+http.route({
+  pathPrefix: "/demo/stripe/v1/payment_intents/",
+  method: "GET",
+  handler: handlePaymentIntents,
+});
+
+http.route({
+  path: "/demo/stripe/docs",
+  method: "GET",
+  handler: handleDocs,
+});
 
 export default http;
