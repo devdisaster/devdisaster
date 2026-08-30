@@ -270,7 +270,7 @@ export default function Dashboard4() {
         return forceThreshold({ clusterId: target._id });
       },
     },
-    { label: "Reset demo data", run: () => resetDemo({}) },
+    { label: "Wipe all demo data", run: () => resetDemo({}) },
   ];
 
   return (
