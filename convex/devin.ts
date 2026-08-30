@@ -706,10 +706,12 @@ export const applyPoll = internalMutation({
 
     const finished = payload.status === "finished";
     const terminalFailure = terminalFailureStatuses.has(payload.status);
+    const evidenceComplete =
+      Boolean(payload.prUrl) && payload.testStatus === "passed";
     if (session.incidentId) {
       const incident = await ctx.db.get("incidents", session.incidentId);
       if (!incident || incident.status === "repair_proposed" || incident.status === "repair_failed") return null;
-      if (finished && payload.prUrl && payload.testStatus === "passed") {
+      if ((finished || payload.status === "blocked") && evidenceComplete) {
         await ctx.db.patch("incidents", incident._id, { status: "validating" });
         await ctx.db.insert("events", {
           productId: session.productId,
@@ -746,7 +748,11 @@ export const applyPoll = internalMutation({
       return null;
     }
 
-    if (session.clusterId && finished && payload.prUrl) {
+    if (
+      session.clusterId &&
+      (finished || payload.status === "blocked") &&
+      payload.prUrl
+    ) {
       const cluster = await ctx.db.get("clusters", session.clusterId);
       if (cluster && cluster.status === "triggered") {
         await ctx.db.patch("clusters", cluster._id, { status: "pr_open" });

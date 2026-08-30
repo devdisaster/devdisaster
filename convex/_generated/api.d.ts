@@ -10,6 +10,8 @@
 
 import type * as cluster from "../cluster.js";
 import type * as crons from "../crons.js";
+import type * as dashboard from "../dashboard.js";
+import type * as demo from "../demo.js";
 import type * as devin from "../devin.js";
 import type * as docs from "../docs.js";
 import type * as http from "../http.js";
@@ -28,6 +30,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   cluster: typeof cluster;
   crons: typeof crons;
+  dashboard: typeof dashboard;
+  demo: typeof demo;
   devin: typeof devin;
   docs: typeof docs;
   http: typeof http;

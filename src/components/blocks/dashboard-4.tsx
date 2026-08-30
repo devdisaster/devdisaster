@@ -1,463 +1,565 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useAction, useMutation, useQuery } from "convex/react";
+import { ExternalLink, RefreshCw } from "lucide-react";
+import { api } from "../../../convex/_generated/api";
+import type { Doc, Id } from "../../../convex/_generated/dataModel";
 
 const cx = (...c: (string | false | null | undefined)[]) =>
   c.filter(Boolean).join(" ");
-import { RefreshCw } from "lucide-react";
 
-type Status = "operational" | "degraded" | "down" | "maintenance";
+type IncidentWithSession = Doc<"incidents"> & {
+  session: Doc<"sessions"> | null;
+};
+type ClusterWithSession = Doc<"clusters"> & {
+  session: Doc<"sessions"> | null;
+};
+type Overview = {
+  product: Doc<"products">;
+  integrations: Omit<Doc<"integrations">, "cachedResponse">[];
+  incidents: IncidentWithSession[];
+  clusters: ClusterWithSession[];
+  sessions: Doc<"sessions">[];
+  events: Doc<"events">[];
+} | null;
 
-const DOT: Record<Status, string> = {
-  operational: "bg-neutral-300 dark:bg-neutral-600",
-  degraded: "bg-amber-500",
-  down: "bg-red-500",
-  maintenance: "bg-neutral-300 dark:bg-neutral-600",
+const INCIDENT_DOT: Record<string, string> = {
+  detected: "bg-amber-500",
+  gathering_context: "bg-amber-500",
+  diagnosing: "bg-amber-500",
+  not_impacted: "bg-neutral-300 dark:bg-neutral-600",
+  needs_review: "bg-amber-500",
+  repair_queued: "bg-red-500",
+  repairing: "bg-red-500",
+  validating: "bg-red-500",
+  repair_proposed: "bg-emerald-500",
+  repair_failed: "bg-red-500",
 };
 
-const WORD: Record<Status, string> = {
-  operational: "Operational",
-  degraded: "Degraded",
-  down: "Down",
-  maintenance: "Maintenance",
+const STATUS_WORD: Record<string, string> = {
+  detected: "Detected",
+  gathering_context: "Gathering context",
+  diagnosing: "Diagnosing",
+  not_impacted: "Not impacted",
+  needs_review: "Needs review",
+  repair_queued: "Repair queued",
+  repairing: "Repairing",
+  validating: "Validating",
+  repair_proposed: "Repair PR proposed",
+  repair_failed: "Repair failed",
 };
 
-const STATS = [
-  {
-    label: "Uptime, 30 days",
-    value: "99.98%",
-    delta: "+0.02 pp",
-    positive: true,
-    spark: [96, 97, 95, 98, 97, 99, 98, 99],
-  },
-  {
-    label: "Open incidents",
-    value: "2",
-    delta: "+1",
-    positive: false,
-    spark: [1, 0, 1, 2, 1, 1, 2, 2],
-  },
-  {
-    label: "P95 latency",
-    value: "142 ms",
-    delta: "+18 ms",
-    positive: false,
-    spark: [118, 124, 121, 130, 128, 135, 138, 142],
-  },
-  {
-    label: "Error rate",
-    value: "0.04%",
-    delta: "−0.01 pp",
-    positive: true,
-    spark: [6, 7, 5, 6, 4, 5, 4, 4],
-  },
-];
+const LEVEL_DOT: Record<string, string> = {
+  info: "bg-neutral-300 dark:bg-neutral-600",
+  warn: "bg-amber-500",
+  critical: "bg-red-500",
+};
 
-function Sparkline({ values }: { values: number[] }) {
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const points = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * 100;
-      const y = 92 - ((v - min) / span) * 84;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
+const timeAgo = (timestamp: number) => {
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(timestamp).toLocaleDateString();
+};
 
+const card =
+  "overflow-hidden rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-white dark:border-neutral-800 dark:bg-neutral-900";
+const cardHeader =
+  "flex h-12 items-center justify-between bg-neutral-50 px-4 dark:bg-neutral-900/60";
+const cardTitle = "text-sm font-medium text-neutral-900 dark:text-neutral-100";
+const countBadge =
+  "inline-flex h-5 shrink-0 items-center rounded-[var(--rb-r-xs,4px)] bg-neutral-200/70 px-1.5 text-[11px] font-medium tabular-nums text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400";
+const buttonClass =
+  "inline-flex h-8 cursor-pointer items-center gap-2 rounded-[var(--rb-r-md,8px)] border border-neutral-200 bg-white px-3 text-[13px] font-medium text-neutral-900 transition-colors hover:border-neutral-300 hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:border-neutral-700 dark:hover:bg-neutral-800";
+
+function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <svg
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
-      aria-hidden
-      className="hidden h-8 w-16 shrink-0 sm:block"
-    >
-      <polyline
-        points={points}
-        fill="none"
-        vectorEffect="non-scaling-stroke"
-        className="stroke-neutral-900 dark:stroke-neutral-100"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <div className="rounded-[var(--rb-r-lg,10px)] border border-neutral-200/70 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+      <p className="truncate text-[13px] text-neutral-500">{label}</p>
+      <p className="mt-2 truncate text-2xl font-medium tabular-nums tracking-[-0.02em] text-neutral-900 dark:text-neutral-100">
+        {value}
+      </p>
+      {hint ? (
+        <p className="mt-1.5 truncate text-[13px] text-neutral-500">{hint}</p>
+      ) : null}
+    </div>
   );
 }
 
-type Service = {
-  name: string;
-  region: string;
-  latency: string;
-  uptime: string;
-  status: Status;
-};
-
-const SERVICES: Service[] = [
-  {
-    name: "REST API",
-    region: "us-east-1",
-    latency: "142 ms",
-    uptime: "99.98%",
-    status: "operational",
-  },
-  {
-    name: "REST API",
-    region: "eu-west-1",
-    latency: "168 ms",
-    uptime: "99.95%",
-    status: "operational",
-  },
-  {
-    name: "Web app",
-    region: "global edge",
-    latency: "61 ms",
-    uptime: "100.00%",
-    status: "operational",
-  },
-  {
-    name: "Auth service",
-    region: "us-east-1",
-    latency: "118 ms",
-    uptime: "99.99%",
-    status: "operational",
-  },
-  {
-    name: "Postgres primary",
-    region: "us-east-1",
-    latency: "4 ms",
-    uptime: "99.97%",
-    status: "operational",
-  },
-  {
-    name: "Search cluster",
-    region: "us-west-2",
-    latency: "402 ms",
-    uptime: "99.62%",
-    status: "degraded",
-  },
-  {
-    name: "Webhooks worker",
-    region: "us-east-1",
-    latency: "-",
-    uptime: "96.20%",
-    status: "down",
-  },
-  {
-    name: "Object storage",
-    region: "eu-west-1",
-    latency: "33 ms",
-    uptime: "99.99%",
-    status: "operational",
-  },
-  {
-    name: "Analytics pipeline",
-    region: "us-west-2",
-    latency: "-",
-    uptime: "-",
-    status: "maintenance",
-  },
-];
-
-type Incident = {
-  title: string;
-  state: string;
-  when: string;
-  dot: string;
-};
-
-const INCIDENTS: Incident[] = [
-  {
-    title: "Elevated search latency in us-west-2",
-    state: "Investigating",
-    when: "14 min ago",
-    dot: "bg-amber-500",
-  },
-  {
-    title: "Webhook delivery failures",
-    state: "Identified",
-    when: "38 min ago",
-    dot: "bg-red-500",
-  },
-  {
-    title: "Analytics backfill maintenance",
-    state: "Scheduled",
-    when: "2 hours ago",
-    dot: "bg-neutral-300 dark:bg-neutral-600",
-  },
-  {
-    title: "Auth latency spike",
-    state: "Resolved",
-    when: "Yesterday",
-    dot: "bg-neutral-300 dark:bg-neutral-600",
-  },
-  {
-    title: "CDN cache purge delays",
-    state: "Resolved",
-    when: "2 days ago",
-    dot: "bg-neutral-300 dark:bg-neutral-600",
-  },
-  {
-    title: "Postgres failover drill",
-    state: "Resolved",
-    when: "Mar 4",
-    dot: "bg-neutral-300 dark:bg-neutral-600",
-  },
-  {
-    title: "Rate limit errors on /v1/events",
-    state: "Resolved",
-    when: "Mar 2",
-    dot: "bg-neutral-300 dark:bg-neutral-600",
-  },
-];
-
-function useScrollFade<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [edges, setEdges] = useState({ start: false, end: false });
-
-  const update = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    const { scrollTop, scrollHeight, clientHeight } = el;
-    setEdges({
-      start: scrollTop > 1,
-      end: Math.ceil(scrollTop + clientHeight) < scrollHeight - 1,
-    });
-  }, []);
-
-  useEffect(() => {
-    update();
-    const el = ref.current;
-    const view = el?.ownerDocument.defaultView;
-    if (!el || !view?.ResizeObserver) return;
-    const observer = new view.ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [update]);
-
-  return { ref, edges, onScroll: update };
+function IncidentTimeline({ incidentId }: { incidentId: Id<"incidents"> }) {
+  const timeline = useQuery(api.dashboard.incidentTimeline, { incidentId }) as {
+    incident: Doc<"incidents">;
+    events: Doc<"events">[];
+    session: Doc<"sessions"> | null;
+  } | null | undefined;
+  if (timeline === undefined) {
+    return <p className="px-3 py-2 text-xs text-neutral-500">Loading timeline…</p>;
+  }
+  if (!timeline) return null;
+  const { incident, events, session } = timeline;
+  return (
+    <div className="mt-2 rounded-[var(--rb-r-lg,10px)] border border-neutral-200/70 bg-white p-3 text-[13px] dark:border-neutral-800 dark:bg-neutral-900">
+      {incident.diagnosisReason ? (
+        <div className="mb-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            Diagnosis ({incident.diagnosisVerdict})
+          </p>
+          <p className="mt-1 text-neutral-900 dark:text-neutral-100">
+            {incident.diagnosisReason}
+          </p>
+        </div>
+      ) : null}
+      {incident.codeEvidence?.length ? (
+        <div className="mb-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            Cited adapter code
+          </p>
+          <pre className="mt-1 overflow-x-auto rounded bg-neutral-50 p-2 font-mono text-[11px] text-neutral-800 dark:bg-neutral-800/60 dark:text-neutral-200">
+            {incident.codeEvidence.join("\n")}
+          </pre>
+        </div>
+      ) : null}
+      {incident.diagnosisEvidence?.length ? (
+        <div className="mb-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            Docs evidence
+          </p>
+          <ul className="mt-1 list-disc pl-4 text-neutral-700 dark:text-neutral-300">
+            {incident.diagnosisEvidence.map((line, index) => (
+              <li key={index}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {session ? (
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            Devin
+          </p>
+          <span className="text-neutral-900 dark:text-neutral-100">
+            {session.status}
+            {session.testStatus ? ` · tests ${session.testStatus}` : ""}
+          </span>
+          {session.devinUrl ? (
+            <a
+              href={session.devinUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-neutral-600 underline dark:text-neutral-400"
+            >
+              session <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : null}
+          {session.prUrl ? (
+            <a
+              href={session.prUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 font-medium text-emerald-700 underline dark:text-emerald-400"
+            >
+              PR{session.prNumber ? ` #${session.prNumber}` : ""}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+        Timeline
+      </p>
+      <ul className="mt-1 flex flex-col gap-1">
+        {[...events]
+          .sort((a, b) => a._creationTime - b._creationTime)
+          .map((event) => (
+            <li key={event._id} className="flex items-start gap-2">
+              <span
+                className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${LEVEL_DOT[event.level]}`}
+              />
+              <span className="min-w-0 flex-1 text-neutral-700 dark:text-neutral-300">
+                {event.message}
+                <span className="ml-1 text-xs text-neutral-500">
+                  {timeAgo(event._creationTime)}
+                </span>
+              </span>
+            </li>
+          ))}
+      </ul>
+    </div>
+  );
 }
 
 export default function Dashboard4() {
-  const {
-    ref: bodyRef,
-    edges: bodyEdges,
-    onScroll: handleBodyScroll,
-  } = useScrollFade<HTMLDivElement>();
-  const [refreshing, setRefreshing] = useState(false);
-  const [freshlyLoaded, setFreshlyLoaded] = useState(false);
-  const timerRef = useRef<number | undefined>(undefined);
+  const overview: Overview | undefined = useQuery(api.dashboard.overview);
+  const resetV1 = useMutation(api.vendor.resetV1);
+  const upgradeV2 = useMutation(api.vendor.upgradeV2);
+  const runMonitorNow = useAction(api.demo.runMonitorNow);
+  const runIntegration = useAction(api.demo.runIntegration);
+  const seedComplaints = useMutation(api.seed.demoComplaints);
+  const forceThreshold = useMutation(api.threshold.forceThreshold);
+  const resetDemo = useMutation(api.demo.resetDemo);
 
-  useEffect(() => () => window.clearTimeout(timerRef.current), []);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [expandedIncident, setExpandedIncident] =
+    useState<Id<"incidents"> | null>(null);
 
-  const refresh = () => {
-    window.clearTimeout(timerRef.current);
-    setRefreshing(true);
-    timerRef.current = window.setTimeout(() => {
-      setRefreshing(false);
-      setFreshlyLoaded(true);
-    }, 900);
+  const runControl = async (name: string, task: () => Promise<unknown>) => {
+    setBusy(name);
+    setNotice(null);
+    try {
+      const result = await task();
+      if (result && typeof result === "object" && "message" in result) {
+        setNotice(String(result.message));
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The action failed.");
+    } finally {
+      setBusy(null);
+    }
   };
+
+  if (overview === undefined) {
+    return (
+      <div className="flex h-full min-h-[720px] w-full items-center justify-center bg-white text-sm text-neutral-500 dark:bg-neutral-950">
+        Loading Sentinel…
+      </div>
+    );
+  }
+  if (overview === null) {
+    return (
+      <div className="flex h-full min-h-[720px] w-full items-center justify-center bg-white text-sm text-neutral-500 dark:bg-neutral-950">
+        No product is configured. Run seed:setupProducts.
+      </div>
+    );
+  }
+
+  const { product, integrations, incidents, clusters, events, sessions } =
+    overview;
+  const integration = integrations[0];
+  const openIncidents = incidents.filter(
+    (incident) =>
+      !["not_impacted", "repair_proposed", "repair_failed"].includes(
+        incident.status,
+      ),
+  );
+  const activeSessions = sessions.filter((session) =>
+    ["working", "blocked", "resumed", "launching"].includes(session.status),
+  );
+  const latestIncident = incidents[0];
+  const integrationStatus = !integration
+    ? { word: "Not configured", dot: "bg-neutral-300 dark:bg-neutral-600" }
+    : latestIncident &&
+        !["not_impacted", "repair_proposed"].includes(latestIncident.status)
+      ? { word: STATUS_WORD[latestIncident.status], dot: INCIDENT_DOT[latestIncident.status] }
+      : { word: "Operational", dot: "bg-emerald-500" };
+
+  const controls: { label: string; run: () => Promise<unknown> }[] = [
+    { label: "Reset vendor (2022-08-01)", run: () => resetV1({}) },
+    { label: "Upgrade vendor (2022-11-15)", run: () => upgradeV2({}) },
+    { label: "Run monitor now", run: () => runMonitorNow({}) },
+    { label: "Run integration", run: () => runIntegration({}) },
+    { label: "Seed complaints", run: () => seedComplaints({}) },
+    {
+      label: "Force threshold",
+      run: async () => {
+        const target = clusters.find((cluster) => cluster.status === "open");
+        if (!target) return { message: "No open feedback cluster to trigger." };
+        return forceThreshold({ clusterId: target._id });
+      },
+    },
+    { label: "Reset demo data", run: () => resetDemo({}) },
+  ];
 
   return (
     <div className="relative flex h-full min-h-[720px] w-full flex-col overflow-hidden bg-white dark:bg-neutral-950">
       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-neutral-200 px-4 sm:px-6 dark:border-neutral-800">
         <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-xl font-medium tracking-[-0.015em] text-neutral-900 dark:text-neutral-100">
-            System status
+            Sentinel
           </h1>
           <span className="hidden items-center gap-1.5 text-[13px] text-neutral-600 sm:inline-flex dark:text-neutral-400">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />2
-            incidents open
-          </span>
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          <span
-            aria-live="polite"
-            className="hidden text-[13px] tabular-nums text-neutral-500 sm:inline"
-          >
-            {refreshing
-              ? "Refreshing…"
-              : freshlyLoaded
-                ? "Updated just now"
-                : "Updated 2 min ago"}
-          </span>
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={refreshing}
-            className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-[var(--rb-r-md,8px)] border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-900 transition-[transform,background-color,border-color,color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:border-neutral-300 hover:bg-neutral-50 active:scale-[0.97] focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--rb-accent,oklch(20.5%_0_0))] disabled:pointer-events-none disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:border-neutral-700 dark:hover:bg-neutral-800 dark:focus-visible:outline-[var(--rb-accent,oklch(100%_0_0))]"
-          >
-            <RefreshCw
-              aria-hidden
+            <span
               className={cx(
-                "h-4 w-4 shrink-0 text-neutral-500",
-                refreshing && "animate-spin motion-reduce:animate-none",
+                "h-1.5 w-1.5 shrink-0 rounded-full",
+                openIncidents.length ? "bg-red-500" : "bg-emerald-500",
               )}
             />
-            Refresh
-          </button>
+            {product.name} · {openIncidents.length} active incident
+            {openIncidents.length === 1 ? "" : "s"}
+          </span>
         </div>
+        <span className="inline-flex items-center gap-1.5 text-[13px] text-neutral-500">
+          <RefreshCw aria-hidden className="h-3.5 w-3.5" />
+          live via Convex
+        </span>
       </header>
 
-      <div className="relative min-h-0 flex-1">
-        <div
-          ref={bodyRef}
-          onScroll={handleBodyScroll}
-          className="h-full overflow-y-auto p-4 sm:p-6"
-        >
-          <div className="grid grid-cols-2 gap-1 rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-neutral-50 p-1 lg:grid-cols-4 dark:border-neutral-800 dark:bg-neutral-950">
-            {STATS.map((s) => (
-              <div
-                key={s.label}
-                className="rounded-[var(--rb-r-lg,10px)] border border-neutral-200/70 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
-              >
-                <p className="truncate text-[13px] text-neutral-500">
-                  {s.label}
-                </p>
-                <div className="mt-2 flex items-end justify-between gap-3">
-                  <p className="truncate text-2xl font-medium tabular-nums tracking-[-0.02em] text-neutral-900 dark:text-neutral-100">
-                    {s.value}
-                  </p>
-                  <Sparkline values={s.spark} />
-                </div>
-                <p className="mt-1.5 truncate text-[13px] tabular-nums">
-                  <span
-                    className={
-                      s.positive
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-red-600 dark:text-red-400"
-                    }
-                  >
-                    {s.delta}
-                  </span>
-                  <span className="hidden text-neutral-500 sm:inline">
-                    {" "}
-                    vs. prior period
-                  </span>
-                </p>
-              </div>
-            ))}
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        <div className="grid grid-cols-2 gap-1 rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-neutral-50 p-1 lg:grid-cols-4 dark:border-neutral-800 dark:bg-neutral-950">
+          <StatCard
+            label="Active contract"
+            value={integration?.activeContractVersion ?? "—"}
+            hint={integration ? `${integration.provider} · ${integration.endpoint}` : undefined}
+          />
+          <StatCard
+            label="Active incidents"
+            value={String(openIncidents.length)}
+            hint={`${incidents.length} total`}
+          />
+          <StatCard
+            label="Devin sessions"
+            value={String(activeSessions.length)}
+            hint={`${sessions.length} total`}
+          />
+          <StatCard
+            label="Feedback clusters"
+            value={String(clusters.length)}
+            hint={`threshold ${product.threshold}`}
+          />
+        </div>
+
+        <div className={cx(card, "mt-4")}>
+          <div className={cardHeader}>
+            <h2 className={cardTitle}>Demo controls</h2>
+            {notice ? (
+              <span className="min-w-0 truncate text-xs text-neutral-500">
+                {notice}
+              </span>
+            ) : null}
           </div>
-
-          <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="overflow-hidden rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-              <div className="flex h-12 items-center bg-neutral-50 px-4 dark:bg-neutral-900/60">
-                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Services
-                </h2>
-              </div>
-              <table className="w-full border-collapse text-left">
-                <caption className="sr-only">Service health</caption>
-                <thead>
-                  <tr>
-                    <th
-                      scope="col"
-                      className="h-9 px-3 text-xs font-medium text-neutral-500 first:pl-4"
-                    >
-                      Service
-                    </th>
-                    <th
-                      scope="col"
-                      className="hidden h-9 px-3 text-right text-xs font-medium text-neutral-500 sm:table-cell"
-                    >
-                      Latency
-                    </th>
-                    <th
-                      scope="col"
-                      className="hidden h-9 px-3 text-right text-xs font-medium text-neutral-500 sm:table-cell"
-                    >
-                      Uptime
-                    </th>
-                    <th
-                      scope="col"
-                      className="h-9 px-3 text-right text-xs font-medium text-neutral-500 last:pr-4"
-                    >
-                      Status
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800/70">
-                  {SERVICES.map((s, i) => (
-                    <tr
-                      key={`${s.name}-${i}`}
-                      className="h-11 transition-colors duration-150 hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
-                    >
-                      <td className="min-w-0 px-3 first:pl-4">
-                        <p className="truncate text-[13px] text-neutral-900 dark:text-neutral-100">
-                          {s.name}
-                        </p>
-                        <p className="truncate font-mono text-[11px] text-neutral-500">
-                          {s.region}
-                        </p>
-                      </td>
-                      <td className="hidden px-3 text-right text-[13px] tabular-nums text-neutral-600 sm:table-cell dark:text-neutral-400">
-                        {s.latency}
-                      </td>
-                      <td className="hidden px-3 text-right text-[13px] tabular-nums text-neutral-600 sm:table-cell dark:text-neutral-400">
-                        {s.uptime}
-                      </td>
-                      <td className="px-3 last:pr-4">
-                        <span className="flex items-center justify-end gap-1.5 whitespace-nowrap text-[13px] text-neutral-600 dark:text-neutral-400">
-                          <span
-                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT[s.status]}`}
-                          />
-                          {WORD[s.status]}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="overflow-hidden rounded-[var(--rb-r-2xl,14px)] border border-neutral-200/70 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-              <div className="flex h-12 items-center justify-between bg-neutral-50 px-4 dark:bg-neutral-900/60">
-                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                  Incidents
-                </h2>
-                <span className="inline-flex h-5 shrink-0 items-center rounded-[var(--rb-r-xs,4px)] bg-neutral-200/70 px-1.5 text-[11px] font-medium tabular-nums text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
-                  {INCIDENTS.length}
-                </span>
-              </div>
-              <ul className="flex flex-col gap-1.5 p-1.5">
-                {INCIDENTS.map((inc, i) => (
-                  <li
-                    key={i}
-                    className="flex min-h-11 items-start gap-2.5 rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2.5 dark:bg-neutral-800/50"
-                  >
-                    <span
-                      className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${inc.dot}`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] text-neutral-900 dark:text-neutral-100">
-                        {inc.title}
-                      </p>
-                      <p className="mt-0.5 text-xs text-neutral-500">
-                        {inc.state} · {inc.when}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
+          <div className="flex flex-wrap gap-2 p-3">
+            {controls.map((control) => (
+              <button
+                key={control.label}
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void runControl(control.label, control.run)}
+                className={buttonClass}
+              >
+                {busy === control.label ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : null}
+                {control.label}
+              </button>
+            ))}
+            {integration ? (
+              <a
+                href={integration.docsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className={buttonClass}
+              >
+                Open docs mirror <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            ) : null}
           </div>
         </div>
 
-        <div
-          aria-hidden="true"
-          className={cx(
-            "pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-white to-transparent transition-opacity duration-200 ease-out dark:from-neutral-950",
-            bodyEdges.start ? "opacity-100" : "opacity-0",
-          )}
-        />
-        <div
-          aria-hidden="true"
-          className={cx(
-            "pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-white to-transparent transition-opacity duration-200 ease-out dark:from-neutral-950",
-            bodyEdges.end ? "opacity-100" : "opacity-0",
-          )}
-        />
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="flex flex-col gap-4">
+            <div className={card}>
+              <div className={cardHeader}>
+                <h2 className={cardTitle}>Integration health</h2>
+              </div>
+              {integration ? (
+                <div className="p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
+                        {integration.name}
+                      </p>
+                      <p className="truncate font-mono text-[11px] text-neutral-500">
+                        {integration.endpoint} · {integration.integrationPath}
+                      </p>
+                    </div>
+                    <span className="flex items-center gap-1.5 whitespace-nowrap text-[13px] text-neutral-600 dark:text-neutral-400">
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${integrationStatus.dot}`}
+                      />
+                      {integrationStatus.word}
+                    </span>
+                  </div>
+                  <dl className="mt-3 grid grid-cols-2 gap-2 text-[13px]">
+                    <div>
+                      <dt className="text-neutral-500">Contract version</dt>
+                      <dd className="font-mono text-neutral-900 dark:text-neutral-100">
+                        {integration.activeContractVersion}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-neutral-500">Monitor</dt>
+                      <dd className="text-neutral-900 dark:text-neutral-100">
+                        {integration.monitorId ?? "manual (Run monitor now)"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-neutral-500">Repository</dt>
+                      <dd className="font-mono text-neutral-900 dark:text-neutral-100">
+                        {product.repo ?? "observer mode"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-neutral-500">Test command</dt>
+                      <dd className="font-mono text-neutral-900 dark:text-neutral-100">
+                        {integration.testCommand}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              ) : (
+                <p className="p-4 text-[13px] text-neutral-500">
+                  No integration is registered.
+                </p>
+              )}
+            </div>
+
+            <div className={card}>
+              <div className={cardHeader}>
+                <h2 className={cardTitle}>Feedback clusters</h2>
+                <span className={countBadge}>{clusters.length}</span>
+              </div>
+              {clusters.length ? (
+                <ul className="flex flex-col gap-1.5 p-1.5">
+                  {clusters.map((cluster) => (
+                    <li
+                      key={cluster._id}
+                      className="flex min-h-11 items-start gap-2.5 rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2.5 dark:bg-neutral-800/50"
+                    >
+                      <span
+                        className={cx(
+                          "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
+                          cluster.status === "pr_open"
+                            ? "bg-emerald-500"
+                            : cluster.status === "triggered"
+                              ? "bg-red-500"
+                              : "bg-amber-500",
+                        )}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] text-neutral-900 dark:text-neutral-100">
+                          {cluster.title}
+                        </p>
+                        <p className="mt-0.5 text-xs text-neutral-500">
+                          {cluster.count}/{product.threshold} · {cluster.status}
+                          {cluster.session?.prUrl ? (
+                            <a
+                              href={cluster.session.prUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="ml-2 text-emerald-700 underline dark:text-emerald-400"
+                            >
+                              PR
+                              {cluster.session.prNumber
+                                ? ` #${cluster.session.prNumber}`
+                                : ""}
+                            </a>
+                          ) : null}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="p-4 text-[13px] text-neutral-500">
+                  No feedback clusters yet. Seed complaints to demo the feedback
+                  agent.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-4">
+            <div className={card}>
+              <div className={cardHeader}>
+                <h2 className={cardTitle}>API incidents</h2>
+                <span className={countBadge}>{incidents.length}</span>
+              </div>
+              {incidents.length ? (
+                <ul className="flex flex-col gap-1.5 p-1.5">
+                  {incidents.map((incident) => (
+                    <li
+                      key={incident._id}
+                      className="rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2.5 dark:bg-neutral-800/50"
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedIncident(
+                            expandedIncident === incident._id
+                              ? null
+                              : incident._id,
+                          )
+                        }
+                        className="flex w-full cursor-pointer items-start gap-2.5 text-left"
+                      >
+                        <span
+                          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${INCIDENT_DOT[incident.status] ?? "bg-neutral-300"}`}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] text-neutral-900 dark:text-neutral-100">
+                            {incident.title}
+                          </span>
+                          <span className="mt-0.5 block text-xs text-neutral-500">
+                            {STATUS_WORD[incident.status] ?? incident.status}
+                            {incident.diagnosisVerdict
+                              ? ` · verdict: ${incident.diagnosisVerdict}`
+                              : ""}
+                            {" · "}
+                            {timeAgo(incident._creationTime)}
+                          </span>
+                        </span>
+                      </button>
+                      {expandedIncident === incident._id ? (
+                        <IncidentTimeline incidentId={incident._id} />
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="p-4 text-[13px] text-neutral-500">
+                  No incidents. Upgrade the vendor and run the monitor to start
+                  the demo.
+                </p>
+              )}
+            </div>
+
+            <div className={card}>
+              <div className={cardHeader}>
+                <h2 className={cardTitle}>Live feed</h2>
+                <span className={countBadge}>{events.length}</span>
+              </div>
+              {events.length ? (
+                <ul className="flex max-h-80 flex-col gap-1.5 overflow-y-auto p-1.5">
+                  {events.map((event) => (
+                    <li
+                      key={event._id}
+                      className="flex items-start gap-2.5 rounded-[var(--rb-r-lg,10px)] bg-neutral-50 px-3 py-2 dark:bg-neutral-800/50"
+                    >
+                      <span
+                        className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${LEVEL_DOT[event.level]}`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] text-neutral-900 dark:text-neutral-100">
+                          {event.message}
+                        </p>
+                        <p className="mt-0.5 text-xs text-neutral-500">
+                          {event.sentinel} · {timeAgo(event._creationTime)}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="p-4 text-[13px] text-neutral-500">
+                  Waiting for the first event.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
