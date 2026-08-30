@@ -1,9 +1,8 @@
 import { cronJobs } from "convex/server";
+import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
-export function registerCrons(): never {
-  throw new Error("todo");
-}
+crons.interval("poll active Devin sessions", { seconds: 20 }, internal.devin.poll, {});
 
 export default crons;

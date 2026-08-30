@@ -392,7 +392,7 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4) → P5(secondary) → P6 �
 
 ---
 
-### Phase 1 — Devin engine *(Iyad; ref 11:15–13:00)*
+### Phase 1 — Devin engine *(COMPLETE 30 Aug 2026; Iyad)*
 
 **Objective:** a Convex-triggered Devin session that ends with a PR URL in the `sessions` table. This is the highest-risk phase — validate the loop with a trivial session FIRST.
 
@@ -409,6 +409,8 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4) → P5(secondary) → P6 �
 **Files:** `convex/devin.ts`, `convex/threshold.ts`, `convex/crons.ts`, `convex/convex.config.ts` (workflow component).
 
 **Acceptance:** an incident hand-set to `repair_queued`/`impacted` (or 5 fake reviews in one cluster) fires a real Devin session with zero manual steps; PR URL appears in the dashboard data; a product without a repo never launches Devin.
+
+**Verified 30 Aug 2026:** complete. Convex launched and persisted smoke session `devin-f2529143497b45168444b3406f740c28` ([session](https://app.devin.ai/sessions/f2529143497b45168444b3406f740c28)), which opened unmerged documentation-only [invoicepilot PR #3](https://github.com/devdisaster/invoicepilot/pull/3). The real `forceThreshold → threshold.check → devin.launch → workflow` path opened unmerged [invoicepilot PR #4](https://github.com/devdisaster/invoicepilot/pull/4); a repeated force call created no duplicate session. Polling persisted PR metadata, structured output, and test evidence; observer-mode and ineligible-incident launch guards were verified; a passing incident fixture advanced through `validating` to `repair_proposed`. `npm run lint`, `npm run build`, and `npx convex dev --once` passed against the personal development deployment. Neither repair PR was merged or deployed.
 
 ---
 
