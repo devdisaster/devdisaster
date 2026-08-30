@@ -149,7 +149,7 @@ export const runIntegration = action({
     return {
       ok: false,
       contractVersion,
-      message: `The integration failed under ${contractVersion}: charges is missing from the PaymentIntent. The runtime failure was reported to Sentinel.`,
+      message: `The integration failed under ${contractVersion}: charges is missing from the PaymentIntent. The runtime failure was reported to Kevin (not Devin).`,
     };
   },
 });

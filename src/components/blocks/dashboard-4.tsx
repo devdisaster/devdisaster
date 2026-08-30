@@ -207,7 +207,7 @@ export default function Dashboard4() {
   if (overview === undefined) {
     return (
       <div className="flex h-full min-h-[720px] w-full items-center justify-center bg-white text-sm text-neutral-500 dark:bg-neutral-950">
-        Loading Sentinel…
+        Loading Kevin (not Devin)…
       </div>
     );
   }
@@ -244,7 +244,7 @@ export default function Dashboard4() {
       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-neutral-200 px-4 sm:px-6 dark:border-neutral-800">
         <div className="flex min-w-0 items-center gap-3">
           <h1 className="text-xl font-medium tracking-[-0.015em] text-neutral-900 dark:text-neutral-100">
-            Sentinel
+            Kevin (not Devin)
           </h1>
           <span className="hidden items-center gap-1.5 text-[13px] text-neutral-600 sm:inline-flex dark:text-neutral-400">
             <span

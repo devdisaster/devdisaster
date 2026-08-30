@@ -468,7 +468,7 @@ export const launchPlain = internalAction({
           prompt,
           idempotent: true,
           max_acu_limit: 5,
-          title: `Sentinel: ${packet.kind === "incident" ? packet.incident.title : packet.cluster.title}`,
+          title: `Kevin (not Devin): ${packet.kind === "incident" ? packet.incident.title : packet.cluster.title}`,
           structured_output_schema: structuredOutputSchema,
         }),
       });
@@ -639,7 +639,7 @@ export const recordNudgeResult = internalMutation({
       incidentId: session.incidentId,
       sentinel: "system",
       message: sent
-        ? "Devin was blocked; Sentinel sent one controlled proceed nudge."
+        ? "Devin was blocked; Kevin (not Devin) sent one controlled proceed nudge."
         : "Devin was blocked; the single controlled nudge attempt failed.",
       level: sent ? "warn" : "critical",
     });
@@ -725,7 +725,7 @@ export const applyPoll = internalMutation({
           productId: session.productId,
           incidentId: incident._id,
           sentinel: "integration",
-          message: "Repair PR proposed with passing tests. Human review is required; Sentinel will not merge it.",
+          message: "Repair PR proposed with passing tests. Human review is required; Kevin (not Devin) will not merge it.",
           level: "info",
         });
       } else if (finished || terminalFailure || payload.testStatus === "failed") {
