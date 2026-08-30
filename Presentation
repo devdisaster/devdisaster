@@ -1,0 +1,51 @@
+The core problem,
+
+Small dev teams get bug reports from 3 places that is difficult to watch in real time: 
+1)what users say in reviews
+2) what upstream APIs quietly change
+3) what actually breaks in production. 
+By the time a human notices any of these, hours (or days) have passed.
+
+
+The core idea
+
+Sentinel is 3 "watchers," each watching one of those signal types, and each one is allowed to trigger an AI engineer (Devin) to actually write and open a fix.
+
+The three sentinels
+
+**1. Feedback Sentinel** - reads the internet so you don't have to
+- It continuously scrapes real reviews and posts (Google Play, Trustpilot, Reddit) about the product using Context.dev
+- Claude reads each new complaint and groups it into a "cluster" - e.g. 5 different people all complaining about "CSV export is broken" get grouped as one issue, not five
+- Once a cluster hits a threshold (say, 5 complaints), Sentinel packages up the actual complaint text and hands it to Devin, which finds the bug in the repo and opens a PR
+
+**2. Docs Sentinel** 
+- This is the "prevention" one. It watches a vendor's API docs/changelog (via a Context.dev *monitor*, which detects meaningful changes)
+- When the vendor changes something, Sentinel doesn't panic-fix immediately — it first checks: *does this actually affect our code?* It compares the new docs against what your integration expects
+- If yes → it's "impacted" → Devin gets the diff and patches your integration, adds a test, opens a PR
+- If no → it's "not impacted" → nothing happens. 
+it's actually reasoning about relevance first and not changing everything for the sake of it
+
+**3. Incident Sentinel** — the real-time one
+- If your app's integration actually fails right now (a real error), that failure gets reported in
+- Instead of starting a totally separate "OMG fix now" flow, it just feeds into the *same* incident that Docs Sentinel may have already created - as corroborating evidence, not a duplicate
+
+The narrative that ties them together
+
+Same problem, three time horizons:
+- Feedback = **already happened** (lagging — users are already annoyed)
+- Docs = **about to happen** (leading — catch it before it breaks)
+- Incident = **happening right now** (real-time)
+
+ The demo: two products side by side
+
+How the three sponsor tools map to it 
+
+- **Context.dev = the senses** — it's how Sentinel reads the outside world (reviews, docs, changelogs)
+- **Convex = the nervous system** — the database, the live-updating dashboard, the thing that receives webhooks and coordinates all three sentinels
+- **Devin = the hands** — the only thing that actually touches code and opens a PR
+
+
+
+
+Sentinel never auto-merges or auto-deploys. It only ever opens a pull request for a human to review. This is deliberately framed as a *feature* (safety), not a limitation 
+
