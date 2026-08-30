@@ -48,4 +48,3 @@ How the three sponsor tools map to it
 
 
 Sentinel never auto-merges or auto-deploys. It only ever opens a pull request for a human to review. This is deliberately framed as a *feature* (safety), not a limitation 
-
