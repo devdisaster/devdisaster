@@ -40,5 +40,12 @@ export default defineConfig([
       "@typescript-eslint/require-await": "off",
     },
   },
+  {
+    // shadcn-generated components export style variants alongside components
+    files: ["src/components/ui/**/*.tsx"],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
   ...convexPlugin.configs.recommended,
 ]);
