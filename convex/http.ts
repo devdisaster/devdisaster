@@ -1,5 +1,5 @@
 import { httpRouter } from "convex/server";
-import { handleDocs, handlePaymentIntents } from "./vendor";
+import { handleDocs, handleDocsControl, handlePaymentIntents } from "./vendor";
 
 const http = httpRouter();
 
@@ -19,6 +19,12 @@ http.route({
   path: "/demo/stripe/docs",
   method: "GET",
   handler: handleDocs,
+});
+
+http.route({
+  path: "/demo/stripe/docs",
+  method: "POST",
+  handler: handleDocsControl,
 });
 
 export default http;
