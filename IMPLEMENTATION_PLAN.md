@@ -1,50 +1,51 @@
 # Implementation Plan — Sentinel
 
-*Every external API shape in this document was verified against live docs/tests on 29 Aug 2026. Nothing here is assumed.*
+*Every external API shape in this document was verified against live docs/tests on 29–30 Aug 2026 (Stripe changelog/object shapes re-verified 30 Aug). Nothing here is assumed.*
 
-**How to use this document:** the build is organized as **phases**, not hours. Each phase is a self-contained brief — you can open a Devin/Claude Code session, paste the phase (plus §R references it names), and say "implement this." Phases 1–5 run in parallel after Phase 0. The clock times in §T are a pacing reference, not the structure.
+**How to use this document:** the build is organized as **phases**, not hours. Each phase is a self-contained brief — you can open a Devin/Claude Code session, paste the phase (plus §R references it names), and say "implement this." Phases 1–4 run in parallel after Phase 0; Phase 5 (feedback agent, secondary) starts once the Phase 2 spine lands. The clock times in §T are a pacing reference, not the structure.
 
 ---
 
 ## §0. Architecture
 
 ```
-Context.dev (scrape API + monitors)
-   │ cron-pulled scrapes                  │ webhook (change.detected, HMAC-signed)
-   ▼                                      ▼
+Context.dev (monitors + scrape API)
+   │ webhook (change.detected, HMAC-signed)   │ cron-pulled scrapes (feedback, secondary)
+   ▼                                          ▼
 ┌─ Convex backend ─────────────────────────────────────────────────────┐
-│ crons.ts      scrape sources every 10 min (+ "Scan now")             │
-│ ingest.ts     normalize + dedupe reviews                             │
-│ cluster.ts    Claude assigns review → cluster                        │
-│ threshold.ts  cluster count ≥ N → schedule devin launch              │
-│ http.ts       /webhooks/context + /ingest/errors                     │
+│ http.ts       /webhooks/context + /ingest/errors + /demo/stripe/*    │
 │ incidents.ts  normalize triggers, dedupe, enforce state transitions  │
 │ docs.ts       retrieve latest docs + run impact diagnosis            │
 │ devin.ts      launch only impacted repairs; poll status/tests/PR     │
+│ vendor.ts     controlled Stripe gateway + docs mirror (v-flag)       │
+│ ingest.ts     scrape + normalize + dedupe feedback posts (secondary) │
+│ cluster.ts    Claude assigns post → cluster (secondary)              │
+│ threshold.ts  cluster count ≥ N → schedule devin launch (secondary)  │
+│ crons.ts      scrape every 10 min + devin poll while active          │
 │ schema.ts     products, integrations, reviews, clusters,             │
-│               triggerEvents, incidents, sessions, events             │
+│               triggerEvents, docChanges, incidents, sessions, events │
 └──────────────┬────────────────────────────────────────────────────────┘
                │ useQuery (reactive websocket)
                ▼
    Vite + React + ReactBits Application UI dashboard
 
-Acme integration failure ──→ Convex shared incident pipeline
-Devin ──→ GitHub org: acme-invoicing repo → tested PRs (never merge/deploy)
+InvoicePilot integration failure ──→ Convex shared incident pipeline
+Devin ──→ GitHub org: invoicepilot repo → tested PRs (never merge/deploy)
 ```
 
-### Two products, one pipeline (the real-data design)
+### One product, one spine (the design)
 
-| | **Revolut** (observer mode) | **Acme Invoicing** (full loop) |
-|---|---|---|
-| Role in demo | Opens the demo: "this is Sentinel on a real business" | The end-to-end story through to Devin's PR |
-| Feedback sources | REAL: Trustpilot (`country: "us"` proxy), Play Store, r/Revolut — all verified scrapeable today | REAL: **r/&lt;AcmeName&gt;** (created tonight, teammates post real complaints; live on-stage post possible). Backup: public feedback-board page in acme repo, also genuinely scraped. Final fallback: seed mutation |
-| API maintenance | — | One controlled PayFlow rates contract backed by real Frankfurter data; Context.dev monitors its docs, and Acme reports runtime contract failures into the same incident flow |
-| Devin | Disabled — product row has no `repo` configured. Pipeline stops at clustering/alerting | Enabled — sessions open PRs on `acme-invoicing` |
-| Why it exists | Kills "this only works on staged data"; same code path, just a config row | Proves the closed loop |
+| | **InvoicePilot** (full loop) |
+|---|---|
+| Role in demo | The whole story: a demo billing SaaS whose repo we own, with one registered Stripe integration |
+| Primary agent | **Integration Engineer**: Context.dev monitors the controlled Stripe docs mirror; InvoicePilot reports runtime contract failures; both triggers converge on one incident, one impact verdict, one Devin repair PR |
+| The breaking change | Replay of Stripe's **real 2022-11-15** upgrade: `charges` removed from PaymentIntent → `latest_charge` (docs.stripe.com/changelog/2022-11-15). Real Stripe test-mode data flows through a thin demo gateway that flips the shape on demand — we say so openly in the demo |
+| Secondary agent | **Feedback**: REAL posts on **r/&lt;InvoicePilot&gt;** (created tonight; teammates post real complaints; live on-stage post possible). Backup: public feedback-board page in the invoicepilot app, also genuinely scraped. Final fallback: seed mutation |
+| Devin | Enabled — sessions open PRs on `invoicepilot`. Products without a `repo` configured would stop at clustering/alerting (the permission model exists; no observer product in this demo) |
 
-**Repos** (create at the event; org decided tonight): `sentinel` (product + controlled PayFlow routes) and `acme-invoicing` (demo SaaS, Devin's target, Devin GitHub App installed).
+**Repos** (create at the event; org decided tonight): `sentinel` (product + controlled Stripe gateway/docs routes) and `invoicepilot` (demo SaaS, Devin's target, Devin GitHub App installed).
 
-**Component decisions:** core pipeline = plain actions + crons + `ctx.scheduler`. The API-maintenance flow uses three logical roles—detection, diagnosis, and repair—but implements them as ordinary Convex functions rather than an agent framework. `@convex-dev/workflow` wraps only the Devin session lifecycle, added after the plain version works. No `@convex-dev/agent`. The dashboard starts from ReactBits Pro Application UI's operations-dashboard pattern rather than a custom layout; it is installed through the required shadcn registry tooling, then wired directly to Convex data.
+**Component decisions:** core pipeline = plain actions + crons + `ctx.scheduler`. The Integration Engineer flow uses three logical roles—detection, diagnosis, and repair—but implements them as ordinary Convex functions rather than an agent framework. `@convex-dev/workflow` wraps only the Devin session lifecycle, added after the plain version works. No `@convex-dev/agent`. The dashboard starts from ReactBits Pro Application UI's operations-dashboard pattern rather than a custom layout; it is installed through the required shadcn registry tooling, then wired directly to Convex data.
 
 ---
 
@@ -61,34 +62,31 @@ export default defineSchema({
   products: defineTable({
     name: v.string(),
     description: v.string(),           // fed into clustering + Devin prompts
-    repo: v.optional(v.string()),      // "org/acme-invoicing" — ABSENT = observer mode (no Devin)
-    playStoreId: v.optional(v.string()),
-    trustpilotDomain: v.optional(v.string()),
+    repo: v.optional(v.string()),      // "org/invoicepilot" — ABSENT = observer mode (no Devin)
     subreddit: v.optional(v.string()),
-    feedbackUrl: v.optional(v.string()), // backup feedback-board page (Acme)
+    feedbackUrl: v.optional(v.string()), // public feedback-board page
     docsUrls: v.array(v.string()),
     threshold: v.number(),
   }),
 
-  integrations: defineTable({          // one Acme integration for the hackathon
+  integrations: defineTable({          // one InvoicePilot integration for the hackathon
     productId: v.id("products"),
-    name: v.string(),                  // "PayFlow Currency Rates"
-    provider: v.string(),
-    docsUrl: v.string(),
-    endpoint: v.string(),
-    integrationPath: v.string(),       // expected customer-code location
+    name: v.string(),                  // "Stripe Payments"
+    provider: v.string(),              // "stripe"
+    docsUrl: v.string(),               // the controlled docs mirror URL
+    endpoint: v.string(),              // "/v1/payment_intents"
+    integrationPath: v.string(),       // "src/lib/stripe.ts"
     expectedContract: v.string(),      // concise customer-expected response contract
-    activeContractVersion: v.union(v.literal("v1"), v.literal("v2")),
-    cachedEurRate: v.optional(v.number()),
-    testCommand: v.string(),
+    activeContractVersion: v.union(v.literal("2022-08-01"), v.literal("2022-11-15")),
+    cachedResponse: v.optional(v.any()), // last-good upstream response (wifi fallback)
+    testCommand: v.string(),           // "npm test"
     monitorId: v.optional(v.string()),
     enabled: v.boolean(),
   }).index("by_product", ["productId"]).index("by_monitor", ["monitorId"]),
 
   reviews: defineTable({
     productId: v.id("products"),
-    source: v.union(v.literal("play"), v.literal("trustpilot"), v.literal("reddit"),
-                    v.literal("board"), v.literal("seed")),
+    source: v.union(v.literal("reddit"), v.literal("board"), v.literal("seed")),
     author: v.string(),
     rating: v.optional(v.number()),
     text: v.string(),
@@ -180,7 +178,7 @@ export default defineSchema({
   events: defineTable({                // war-room feed — EVERY state change posts here
     productId: v.id("products"),
     incidentId: v.optional(v.id("incidents")),
-    sentinel: v.string(),              // "feedback" | "docs" | "incident" | "system"
+    sentinel: v.string(),              // "integration" | "feedback" | "system"
     message: v.string(),
     level: v.union(v.literal("info"), v.literal("warn"), v.literal("critical")),
   }).index("by_product", ["productId"]).index("by_incident", ["incidentId"]),
@@ -196,7 +194,7 @@ Launch — `POST https://api.devin.ai/v1/sessions`, header `Authorization: Beare
   "prompt": "<see R3>",
   "idempotent": true,
   "max_acu_limit": 5,
-  "title": "Sentinel: <cluster title>",
+  "title": "Sentinel: <incident/cluster title>",
   "structured_output_schema": {
     "type": "object",
     "properties": { "pr_url": {"type": "string"}, "summary": {"type": "string"}, "root_cause": {"type": "string"}, "tests_passed": {"type": "boolean"}, "test_summary": {"type": "string"} }
@@ -209,7 +207,46 @@ Poll — `GET https://api.devin.ai/v1/sessions/{id}` → `status_enum` (`working
 
 Nudge when `blocked` — `POST /v1/sessions/{id}/message` `{"message": "Proceed with your best judgment."}`.
 
-### R3. Devin prompt template
+### R3. Devin prompt templates
+
+**API-maintenance repair (primary).** Launch only when the linked incident has `diagnosisVerdict: "impacted"`:
+
+```
+You are repairing a broken third-party API integration in the repository {org}/{repo}.
+Work on a new branch and open a pull request. Never merge or deploy.
+
+## Product context
+{product.description}
+
+## Incident: {incident.title}
+Trigger source(s): {docs change | runtime failure | both}
+Provider: {integration.provider} — endpoint {integration.endpoint}
+Registered integration path: {integration.integrationPath}
+Expected contract (what the code assumes today): {integration.expectedContract}
+
+## What changed (from the provider's docs, retrieved {timestamp})
+{Context.dev change summary + latest docs excerpt + docs URL}
+Affected element: {affectedEndpoint / field / version}
+
+## Runtime evidence (if present)
+{sanitized error message, endpoint, status code, observed contract version}
+
+## Diagnosis
+{diagnosisReason + codeEvidence lines citing the adapter's usage of the changed field}
+
+## Task
+1. Inspect {integration.integrationPath} and confirm the diagnosis.
+2. Make the smallest integration-only change so the code works with the new contract.
+   Do not refactor unrelated code. Do not touch the vendor or its docs.
+3. Update or add a regression test covering the NEW contract shape (fixture provided in evidence).
+4. Run: {integration.testCommand}
+5. Open a PR titled "fix: {incident.title}" citing this incident's evidence in the body.
+6. Report pr_url, summary, root_cause, tests_passed, test_summary in your structured output.
+
+If the evidence is insufficient or the code is not actually affected, report that instead of forcing a patch.
+```
+
+**Feedback fix (secondary):**
 
 ```
 You are fixing a bug in the repository {org}/{repo}. Work on a new branch and open a pull request.
@@ -230,42 +267,40 @@ You are fixing a bug in the repository {org}/{repo}. Work on a new branch and op
 Keep the diff small. If you cannot find the bug, open a draft PR documenting your investigation instead.
 ```
 
-API-maintenance variant: launch only when the linked incident has `diagnosisVerdict: "impacted"`. Replace Evidence with the incident packet: trigger source(s), sanitized runtime error if present, Context.dev change summary, latest docs excerpt/URL, affected endpoint/schema/version, registered integration path and expected contract, diagnosis reason, expected behavior, and test command. Instruct Devin to inspect the repository, make the smallest integration-only change, update or add a regression test, run the named test command, and open a PR. Explicitly prohibit merge and deployment. If the evidence is insufficient or the code is not affected, report that instead of forcing a patch.
-
-### R4. Context.dev scraping API (verified)
+### R4. Context.dev scraping API (verified) — feedback agent only
 
 `GET https://api.context.dev/v1/web/scrape/markdown?url=...` — header `Authorization: Bearer $CONTEXT_API_KEY`. Params: `country` (proxy), `waitForMs`, `maxAgeMs` (0 = fresh), `useMainContentOnly`. Docs: https://docs.context.dev/api-reference
 
 Verified per-source recipes:
-- **Trustpilot** (Revolut): `url=https://www.trustpilot.com/review/revolut.com`, **`country=us` required** (Cloudflare otherwise), `waitForMs=5000`. **Parse `metadata.jsonLd`** — contains ~20 structured reviews (`reviewBody`, `reviewRating.ratingValue`, `datePublished`, `author.name`). Do not parse the markdown.
-- **Play Store** (Revolut): `url=https://play.google.com/store/apps/details?id=com.revolut.revolut&hl=en`, `waitForMs=3000` → markdown contains recent reviews + dev replies. Extract via Claude (R6).
-- **Reddit** (both products): `url=https://www.reddit.com/r/{subreddit}/search/?q=bug&restrict_sr=1&sort=new` (for Acme's fresh subreddit use `/r/{sub}/new/` instead — no search term needed) → Context auto-routes to old.reddit, full post bodies. Extract via Claude (R6).
-- **Feedback board** (Acme backup): plain scrape of the board page URL.
+- **Reddit** (InvoicePilot): `url=https://www.reddit.com/r/{subreddit}/new/` (fresh subreddit — no search term needed) → Context auto-routes to old.reddit, full post bodies. Extract via Claude (R6).
+- **Feedback board** (backup source): plain scrape of the board page URL in the deployed invoicepilot app.
 - Demo scrapes: `maxAgeMs=0`. Background cron: default caching fine.
 
 ### R5. Context.dev monitors (verified via MCP contract; REST under same base — see docs "Monitors")
 
-Create once per docs URL (Phase 3):
+Create once for the controlled Stripe docs mirror (Phase 2):
 
 ```json
 {
-  "name": "payflow-api-docs",
+  "name": "stripe-api-docs",
   "mode": "web",
-  "target": { "type": "page", "url": "https://{deployment}.convex.site/demo/vendor/docs",
-    "instructions": "Report changes to API endpoints, versions, parameters, or response fields. Ignore cosmetic or wording-only changes." },
+  "target": { "type": "page", "url": "https://{deployment}.convex.site/demo/stripe/docs",
+    "instructions": "Report changes to API endpoints, versions, parameters, or response fields (added, renamed, or removed attributes). Ignore cosmetic or wording-only changes." },
   "change_detection": { "type": "semantic", "confidence_threshold": 0.7 },
   "schedule": { "type": "interval", "frequency": 10, "unit": "minutes" },
   "webhook": { "url": "https://{deployment}.convex.site/webhooks/context", "events": ["change.detected"] }
 }
 ```
 
-Use one monitor for the controlled PayFlow docs. The minimum interval is 10 minutes, so use **run-monitor-now** for the on-demand demo. Webhook signature: header `X-Context-Signature: t=<unix>,v1=<hmac>`, HMAC-SHA256 over `"{t}.{rawBody}"` keyed by the `secret` returned at creation; verify with constant-time compare and reject stale timestamps.
+The minimum interval is 10 minutes, so use **run-monitor-now** for the on-demand demo. Webhook signature: header `X-Context-Signature: t=<unix>,v1=<hmac>`, HMAC-SHA256 over `"{t}.{rawBody}"` keyed by the `secret` returned at creation; verify with constant-time compare and reject stale timestamps.
 
 ### R6. Claude calls (Anthropic API, model `claude-haiku-4-5`)
 
-**Extraction** (Play/Reddit markdown → reviews): "Extract user complaints/reviews from this page content as JSON: `[{author, rating?, text, url?, publishedAt?}]`. Only actual user feedback, not marketing copy."
+**API impact diagnosis** (primary, Phase 2): combine the proactive docs diff or reactive error with the `integrations` row, the latest docs retrieved through Context.dev, and the current contents of the configured integration file from InvoicePilot's public GitHub repo. Return `{verdict: "impacted"|"not_impacted"|"uncertain", confidence, summary, affectedEndpoints[], contractChange, codeEvidence[], evidence[]}`. Before the model call, deterministically check whether the changed endpoint/version overlaps the registered endpoint; after the call, require evidence naming both the changed contract element (e.g. `charges` removed from PaymentIntent) and matching code usage (e.g. `pi.charges.data[0]` in `src/lib/stripe.ts`). If the configured file cannot be retrieved, return `uncertain` instead of guessing. `not_impacted` stops without Devin, `uncertain` becomes `needs_review`, and only `impacted` schedules a repair.
 
-**Clustering** (per new review):
+**Extraction** (secondary; Reddit/board markdown → posts): "Extract user complaints/reviews from this page content as JSON: `[{author, rating?, text, url?, publishedAt?}]`. Only actual user feedback, not marketing copy."
+
+**Clustering** (secondary; per new post):
 ```
 System: You triage user complaints for {product.name}: {product.description}.
 User: Existing clusters: {[{id, title, summary}] or "none"}
@@ -276,13 +311,11 @@ Return JSON: {"action": "attach"|"create"|"ignore", "clusterId": "...",
 ```
 Apply result in one mutation: attach/create, increment count, threshold check → schedule `devin.launch` (only if product has `repo`), flip status, post `events` row.
 
-**API impact diagnosis** (Phase 3): combine the proactive docs diff or reactive error with the `integrations` row, the latest docs retrieved through Context.dev, and the current contents of the configured integration file from Acme's public GitHub repo. Return `{verdict: "impacted"|"not_impacted"|"uncertain", confidence, summary, affectedEndpoints[], contractChange, codeEvidence[], evidence[]}`. Before the model call, deterministically check whether the changed endpoint/version overlaps the registered endpoint; after the call, require evidence naming both the changed contract element and matching code usage. If the configured file cannot be retrieved, return `uncertain` instead of guessing. `not_impacted` stops without Devin, `uncertain` becomes `needs_review`, and only `impacted` schedules a repair.
-
 ### R7. Env vars (per Convex deployment, set via dashboard)
 
-`DEVIN_API_KEY` · `ANTHROPIC_API_KEY` · `CONTEXT_API_KEY` · `CONTEXT_WEBHOOK_SECRET` (after Phase 3 creates monitors) · `SENTINEL_INGEST_TOKEN` (shared only with Acme) · `GITHUB_ORG` (name only, no token needed—Devin's GitHub App handles repo access). Frankfurter needs **no key**.
+`DEVIN_API_KEY` · `ANTHROPIC_API_KEY` · `CONTEXT_API_KEY` · `CONTEXT_WEBHOOK_SECRET` (after Phase 2 creates the monitor) · `STRIPE_SECRET_KEY` (test-mode `sk_test_...`, server-side in the gateway only — never in the invoicepilot repo) · `SENTINEL_INGEST_TOKEN` (shared only with InvoicePilot) · `GITHUB_ORG` (name only, no token needed—Devin's GitHub App handles repo access).
 
-### R8. Shared API-maintenance incident flow
+### R8. Shared incident flow (Integration Engineer spine)
 
 Both ingress paths call the same `incidents.receiveTrigger` mutation:
 
@@ -305,18 +338,34 @@ Runtime failure ──────┘                                  │
 ```
 
 1. Normalize the input into `triggerEvents`; sanitize runtime payloads before storage.
-2. Find or create an incident using `integrationId + affected endpoint + observed contract version` as the fingerprint. Both PayFlow responses include a version, so docs and runtime triggers for v2 converge deterministically. If the other trigger already opened the incident, attach evidence rather than launching a second repair.
-3. Load the integration registration, retrieve the latest docs via Context.dev, and fetch only the configured integration file from Acme's public GitHub repo. Store the evidence needed for the incident, not an unnecessary second knowledge system or full repo index.
+2. Find or create an incident using `integrationId + affected endpoint + observed contract version` as the fingerprint. The gateway stamps every response with a `Stripe-Version` header and the docs mirror names the version, so docs and runtime triggers for 2022-11-15 converge deterministically. If the other trigger already opened the incident, attach evidence rather than launching a second repair.
+3. Load the integration registration, retrieve the latest docs via Context.dev, and fetch only the configured integration file from InvoicePilot's public GitHub repo. Store the evidence needed for the incident, not an unnecessary second knowledge system or full repo index.
 4. Run R6 diagnosis against the changed contract and actual code usage. `not_impacted` stops, `uncertain` requires human review, and `impacted` schedules Devin.
 5. Build the R3 evidence packet and launch Devin. Poll status into `sessions`; record test outcome and PR metadata.
 6. A finished run with a PR becomes `repair_proposed`, not `resolved`. Human review/merge is the default, and Sentinel never auto-deploys.
 7. Write an `events` row for every transition so the dashboard can render one auditable incident timeline.
 
+### R9. Controlled Stripe gateway + docs mirror (the vendor we can break on demand)
+
+The demo replays a breaking change Stripe **actually shipped** — API version **2022-11-15** removed the `charges` attribute from PaymentIntent; integrations must use `latest_charge` instead (docs.stripe.com/changelog/2022-11-15). Real Stripe test-mode data flows through; only the response *shape* is pinned by our flag. Framing for judges: "Stripe test mode behind a demo gateway so we can replay the real 2022-11-15 upgrade on stage."
+
+**Routes (Convex HTTP actions, public):**
+- `POST /demo/stripe/v1/payment_intents` and `GET /demo/stripe/v1/payment_intents/{id}` — forward to `https://api.stripe.com` with `$STRIPE_SECRET_KEY` and `expand[]=latest_charge`, then shape per the integration row's `activeContractVersion`:
+  - **`2022-08-01`** (old shape): embed the expanded charge as `"charges": {"object": "list", "data": [<charge>], "has_more": false}`; omit `latest_charge`.
+  - **`2022-11-15`** (new shape): omit `charges`; include `"latest_charge": "<charge id>"` (string id, not expanded) — exactly how the real upgrade landed.
+  - Stamp the response header `Stripe-Version: <active version>` (Stripe sets this header on real responses; the adapter reports it as the observed contract version).
+  - On upstream failure, serve `cachedResponse` (shaped per flag) so vendor/wifi availability never controls the demo; refresh `cachedResponse` on every good call.
+- `GET /demo/stripe/docs` — renders the PaymentIntent object reference section + changelog for the active version. The 2022-11-15 render adds the changelog entry "Removes the `charges` attribute from the PaymentIntent object — use `latest_charge` instead" and drops `charges` from the attribute list. Keep the page content faithful to the real Stripe docs wording.
+
+**Demo mutations (exercise real handlers, never edit incident state directly):** `vendor.resetV1` (back to `2022-08-01`), `vendor.upgradeV2` (flip to `2022-11-15`) — one flag flips endpoint and docs together.
+
+**What breaks in InvoicePilot:** `src/lib/stripe.ts` reads `pi.charges.data[0].receipt_url` and `.status` to mark invoices paid and link receipts. Under `2022-11-15` that path is `undefined` → the adapter's runtime validation throws a contract error → sanitized report to `/ingest/errors` with endpoint + observed `Stripe-Version`. **The fix Devin ships:** read `latest_charge`, fetch the charge (`GET /v1/charges/{id}` through the gateway) or use the expanded form, plus a regression test against a 2022-11-15 fixture.
+
 ---
 
 ## §P. Phases
 
-Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretch)**. P3 and P5 share the PayFlow contract from R1/R8: P3 owns the controlled API/docs and incident spine; P5 owns Acme's adapter/error reporting/tests. Stub their typed boundary in P0 so both proceed in parallel. P1's live test needs P5's repo to exist (use a README-only repo created in P0).
+Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4) → P5(secondary) → P6 → P7(stretch)**. P2 and P3 share the Stripe contract from R1/R9: P2 owns the gateway/docs mirror and incident spine; P3 owns InvoicePilot's adapter/error reporting/tests. Stub their typed boundary in P0 so both proceed in parallel. P1's live test needs P3's repo to exist (use a README-only repo created in P0). P2's repair step needs P1's `devin.launch`.
 
 ---
 
@@ -325,118 +374,116 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 **Objective:** one repo, four laptops building in parallel with a shared contract.
 
 **Deliverables**
-1. GitHub org repos created: `sentinel`, `acme-invoicing` (README-only for now). Devin GitHub App covers both (installed org-wide tonight).
+1. GitHub org repos created: `sentinel`, `invoicepilot` (README-only for now). Devin GitHub App covers both (installed org-wide tonight).
 2. `npm create convex@latest sentinel` (Vite + React) → pushed. Everyone clones; each runs `npx convex dev` (personal dev deployment); hot reload verified on all 3 laptops.
-3. **`convex/schema.ts` exactly as R1** + stub files with exported, typed, `throw new Error("todo")` function signatures: `ingest.ts`, `cluster.ts`, `threshold.ts`, `incidents.ts`, `docs.ts`, `devin.ts`, `http.ts`, `crons.ts`, `seed.ts`. Committed and pushed before anyone splits off.
-4. Env vars (R7) set in every dev deployment + prod.
+3. **`convex/schema.ts` exactly as R1** + stub files with exported, typed, `throw new Error("todo")` function signatures: `incidents.ts`, `docs.ts`, `devin.ts`, `vendor.ts`, `http.ts`, `ingest.ts`, `cluster.ts`, `threshold.ts`, `crons.ts`, `seed.ts`. Committed and pushed before anyone splits off.
+4. Env vars (R7) set in every dev deployment + prod. Verify the Stripe test key with one raw `curl https://api.stripe.com/v1/payment_intents -u sk_test_...: -d amount=1000 -d currency=aed -d "payment_method_types[]=card"`.
 5. Confirm the team has a ReactBits Pro or Ultimate license. Run `npx shadcn@latest init` because ReactBits Application UI uses the shadcn registry protocol, register `@reactbits-pro` in `components.json` per the official installation guide, then install the operations dashboard with `npx shadcn@latest add @reactbits-pro/dashboard-4`. Keep the license key only in local `.env.local`; never commit it. Do not install extra templates until Dashboard 4 is wired.
-6. Two product rows inserted (via a `seed.setupProducts` mutation): Revolut (observer — playStoreId `com.revolut.revolut`, trustpilotDomain `revolut.com`, subreddit `Revolut`, **no repo**) and Acme Invoicing (repo `org/acme-invoicing`, subreddit `<AcmeName>`, threshold 5). Insert one Acme `integrations` row with the controlled rates endpoint, docs URL placeholder, expected response contract, integration path, and test command.
+6. One product row inserted (via a `seed.setupProducts` mutation): InvoicePilot (repo `org/invoicepilot`, subreddit `<InvoicePilotName>`, feedbackUrl placeholder, threshold 5). Insert one `integrations` row: provider `stripe`, endpoint `/v1/payment_intents`, docs URL = the mirror route, integrationPath `src/lib/stripe.ts`, expectedContract (the 2022-08-01 shape summary), `activeContractVersion: "2022-08-01"`, testCommand `npm test`.
 
-**Acceptance:** all 3 laptops render the ReactBits Dashboard 4 scaffold against their own deployment; `schema.ts` + stubs are on main; both product rows and the single Acme integration row are visible in the Convex data browser; no license key is tracked by Git.
+**Acceptance:** all 3 laptops render the ReactBits Dashboard 4 scaffold against their own deployment; `schema.ts` + stubs are on main; the product row and the single Stripe integration row are visible in the Convex data browser; the raw Stripe test call succeeded; no license key is tracked by Git.
 
 ---
 
-### Phase 1 — Devin engine *(Iyad; ref 11:15–14:00)*
+### Phase 1 — Devin engine *(Iyad; ref 11:15–13:00)*
 
 **Objective:** a Convex-triggered Devin session that ends with a PR URL in the `sessions` table. This is the highest-risk phase — validate the loop with a trivial session FIRST.
 
 **Prereqs:** P0. Uses R2, R3.
 
 **Deliverables**
-1. `devin.launch` internalAction: builds an R3 prompt from cluster evidence or an already-impacted API incident, POSTs R2 launch, writes `sessions` + `events`. Guard: skip and log if the product has no repo; for API maintenance, also reject any incident not in `repair_queued` with `diagnosisVerdict: "impacted"`.
-2. `devin.poll` internalAction on a 20s cron (only while any session `status ∈ {working, blocked, resumed}`): GET status, update the run, and capture structured test outcome plus `pull_request.url`. Feedback runs update the linked cluster; API runs advance `repairing → validating → repair_proposed` only when a PR exists and tests pass. A missing PR or failed test becomes `repair_failed`. Auto-nudge on `blocked` (R2).
-3. `threshold.check` mutation: on cluster count increment, if `count >= product.threshold && status === "open"` → set `triggered`, post event, `ctx.scheduler.runAfter(0, internal.devin.launch, ...)`.
-4. **Smoke test (do this before building 2–3):** manually run `devin.launch` with prompt "Add a LICENSE file to {org}/acme-invoicing and open a PR" → confirm PR URL lands in the table. **This is the 12:00 hard checkpoint.**
+1. `devin.launch` internalAction: builds an R3 prompt from an already-impacted API incident or cluster evidence, POSTs R2 launch, writes `sessions` + `events`. Guard: skip and log if the product has no repo; for API maintenance, also reject any incident not in `repair_queued` with `diagnosisVerdict: "impacted"`.
+2. `devin.poll` internalAction on a 20s cron (only while any session `status ∈ {working, blocked, resumed}`): GET status, update the run, and capture structured test outcome plus `pull_request.url`. API runs advance `repairing → validating → repair_proposed` only when a PR exists and tests pass; a missing PR or failed test becomes `repair_failed`. Feedback runs update the linked cluster. Auto-nudge on `blocked` (R2).
+3. `threshold.check` mutation (consumed by P5): on cluster count increment, if `count >= product.threshold && status === "open"` → set `triggered`, post event, `ctx.scheduler.runAfter(0, internal.devin.launch, ...)`.
+4. **Smoke test (do this before building 2–3):** manually run `devin.launch` with prompt "Add a LICENSE file to {org}/invoicepilot and open a PR" → confirm PR URL lands in the table. **This is the 12:00 hard checkpoint.**
 5. After 1–4 work: wrap launch→poll→record in `@convex-dev/workflow` (durable retries; the "Convex Workflow orchestrates Devin" judging point).
 6. Admin mutation `forceThreshold(clusterId)` for demo control.
 
 **Files:** `convex/devin.ts`, `convex/threshold.ts`, `convex/crons.ts`, `convex/convex.config.ts` (workflow component).
 
-**Acceptance:** inserting 5 fake reviews into one Acme cluster fires a real Devin session with zero manual steps; PR URL appears in the dashboard data; Revolut clusters crossing threshold post an event but never launch Devin.
+**Acceptance:** an incident hand-set to `repair_queued`/`impacted` (or 5 fake reviews in one cluster) fires a real Devin session with zero manual steps; PR URL appears in the dashboard data; a product without a repo never launches Devin.
 
 ---
 
-### Phase 2 — Feedback ingestion + clustering *(Shashwat; ref 11:15–14:30)*
+### Phase 2 — Integration Engineer spine *(PRIMARY; Shashwat owns gateway/ingest, Iyad owns incidents/diagnosis after P1 core lands; ref 11:15–14:00)*
 
-**Objective:** real complaints from real sources for both products, clustered by Claude, feeding Phase 1's threshold check.
+**Objective:** proactive docs changes and reactive integration failures enter one incident flow that proves customer-code impact before Devin opens a tested repair PR. **This is the product.**
 
-**Prereqs:** P0. Uses R4, R6. Acme's subreddit exists (tonight).
+**Prereqs:** P0; P1 `devin.launch` for the repair step (build up to the gate in parallel before it lands); P3 adapter path + regression test (stubbed boundary from P0). Uses R5, R6, R8, R9.
 
 **Deliverables**
-1. `ingest.scrapeSource` action per source recipe in R4 (trustpilot | play | reddit | board), storing raw results.
-2. Extraction: Trustpilot via JSON-LD parse (no LLM); Play/Reddit/board via Claude extraction (R6). Normalize to `reviews` rows; dedupe on `hash` (skip existing before clustering — protects against re-scrapes).
-3. `cluster.assign` action per new review (R6 clustering prompt) + `cluster.apply` mutation (atomic attach/create/increment → calls `threshold.check` from P1; until P1 lands, stub logs only).
-4. `crons.interval("scrape-all", {minutes: 10}, ...)` over all products' configured sources + public `scanNow(productId)` mutation for the dashboard button.
-5. **Real-data pass for Revolut:** run scrapes against all three Revolut sources; confirm real complaints cluster sensibly. Cache results in DB in the morning so the demo opens with data even if venue wifi dies.
-6. **Real-data pass for Acme:** teammates post 5–8 real complaint posts on r/&lt;AcmeName&gt; describing the planted bugs (coordinate wording with Phase 5's bug list); confirm scrape → extract → cluster works. If Reddit auto-filters the new subreddit, switch Acme's source to the feedback board (P5.4) — same pipeline, different URL.
-7. `seed.demoComplaints` mutation (~25 synthetic complaints matching planted bugs) — final fallback only.
+1. Build the R9 controlled Stripe gateway routes: `POST/GET /demo/stripe/v1/payment_intents[...]` forwarding to real Stripe test mode and shaping per `activeContractVersion`, with `Stripe-Version` response header and `cachedResponse` fallback; `GET /demo/stripe/docs` rendering the matching contract; `vendor.resetV1` / `vendor.upgradeV2` mutations.
+2. `POST /webhooks/context`: verify `X-Context-Signature` HMAC (R5), resolve the integration by `monitorId`, persist `docChanges` + a `docs` trigger event, then call `incidents.receiveTrigger`.
+3. `POST /ingest/errors`: require `Authorization: Bearer $SENTINEL_INGEST_TOKEN`; accept `productId`, `integrationId`, endpoint, observed contract version, message, optional stack/status code; strip headers, request bodies, and query values, enforce a small payload limit, then persist `errors` + a `runtime` trigger event and call the same `incidents.receiveTrigger`. No general log pipeline or spike detector in core.
+4. `incidents.receiveTrigger`: dedupe using the R8 fingerprint, create or attach to an incident, and emit every state transition to `events`. A second trigger adds evidence and never launches a duplicate repair.
+5. `docs.gatherAndDiagnose`: retrieve the latest docs through Context.dev and the configured integration file from InvoicePilot's public GitHub repo; combine those with the trigger, registered endpoint/contract/path, and existing evidence, then run R6 impact diagnosis. Do not crawl or index the repository.
+6. Apply the impact gate: `not_impacted` stops; `uncertain` becomes `needs_review`; `impacted` becomes `repair_queued` and schedules `devin.launch` with the R3 API-maintenance packet.
+7. Extend `devin.poll` to save test results and PR metadata and advance the incident through `repairing → validating → repair_proposed`. Never merge or deploy.
+8. Create one Context.dev monitor for the controlled docs mirror (R5), store its ID on the `integrations` row, and store its webhook secret in the environment. Dashboard controls may reset v1, activate the 2022-11-15 upgrade, run the monitor now, and call the InvoicePilot integration, but must exercise real handlers rather than directly editing incident state.
 
-**Files:** `convex/ingest.ts`, `convex/cluster.ts`, `convex/crons.ts`, `convex/seed.ts`.
+**Files:** `convex/http.ts`, `convex/vendor.ts`, `convex/incidents.ts`, `convex/docs.ts`, `convex/devin.ts`, monitor-creation script or dashboard notes.
 
-**Acceptance:** "Scan now" on Revolut pulls & clusters real reviews end-to-end; "Scan now" on Acme pulls the real subreddit posts and clusters them into the planted-bug clusters; re-running scrapes creates zero duplicates.
+**Acceptance (the 14:00 primary checkpoint):** flipping to 2022-11-15 and running the monitor produces `detected → gathering_context → diagnosing → repair_queued → repairing → validating → repair_proposed`, with diagnosis evidence citing both the removed `charges` field and the adapter line that reads it, a passing regression test, and a real Devin PR. Running the broken integration independently enters the same flow; running it during the proactive incident attaches evidence without creating a second session.
 
 ---
 
-### Phase 3 — API Integration Maintainer *(Docs Sentinel + shared incident spine; Iyad after P1 core lands, ref 13:30–15:00)*
+### Phase 3 — Demo assets: InvoicePilot repo *(Ash, driven through Devin chat; ref 11:15–14:30)*
 
-**Objective:** proactive docs changes and reactive integration failures enter one incident flow that proves customer-code impact before Devin opens a tested repair PR.
+**Objective:** everything Devin fixes and the gateway serves for the InvoicePilot story. Built by prompting Devin interactively—which is itself demo-able meaningful Devin usage.
 
-**Prereqs:** P0; P1 `devin.launch`; P5 controlled vendor endpoint, docs URL, Acme integration path, and regression test. Uses R5, R6, R8.
+**Prereqs:** P0 (repo exists). Coordinate feedback bug wording with Phase 5 and the Stripe contract with Phase 2 (R9).
 
 **Deliverables**
-1. `POST /webhooks/context`: verify `X-Context-Signature` HMAC (R5), resolve the integration by `monitorId`, persist `docChanges` + a `docs` trigger event, then call `incidents.receiveTrigger`.
-2. `POST /ingest/errors`: require `Authorization: Bearer $SENTINEL_INGEST_TOKEN`; accept `productId`, `integrationId`, endpoint, observed contract version, message, optional stack/status code; strip headers, request bodies, and query values, enforce a small payload limit, then persist `errors` + a `runtime` trigger event and call the same `incidents.receiveTrigger`. No general log pipeline or spike detector in core.
-3. `incidents.receiveTrigger`: dedupe using the R8 fingerprint, create or attach to an incident, and emit every state transition to `events`. A second trigger adds evidence and never launches a duplicate repair.
-4. `docs.gatherAndDiagnose`: retrieve the latest docs through Context.dev and the configured integration file from Acme's public GitHub repo; combine those with the trigger, registered endpoint/contract/path, and existing evidence, then run R6 impact diagnosis. Do not crawl or index the repository.
-5. Apply the impact gate: `not_impacted` stops; `uncertain` becomes `needs_review`; `impacted` becomes `repair_queued` and schedules `devin.launch` with the R3 API-maintenance packet.
-6. Extend `devin.poll` to save test results and PR metadata and advance the incident through `repairing → validating → repair_proposed`. Never merge or deploy.
-7. Build public PayFlow demo routes: `GET /demo/vendor/rates` proxies or reads cached Frankfurter rates and shapes them according to a Convex-stored `v1|v2` flag; `GET /demo/vendor/docs` renders the matching contract. Add reset-to-v1 and activate-v2 mutations. Keep a cached rate fallback so vendor availability does not control the demo.
-8. Create one Context.dev monitor for the controlled docs, store its ID on the `integrations` row, and store its webhook secret in the environment. Dashboard controls may reset v1, activate the single v2 break, run the monitor now, and call the Acme integration, but must exercise real handlers rather than directly editing incident state.
+1. Devin scaffolds `invoicepilot`: small Vite/Next billing app—invoices, CSV export, and "collect payment" through one isolated `src/lib/stripe.ts` adapter that calls the R9 gateway (base URL from env). The adapter creates/retrieves PaymentIntents and reads `charges.data[0]` for receipt URL + paid status (the 2022-08-01 shape). Include a strong `README.md` + `AGENTS.md` with run/test commands. The Stripe secret key lives only in Sentinel's gateway — InvoicePilot never holds it.
+2. Plant two small feedback bugs for the Feedback agent (CSV header row dropped, and one optional form bug); do not add more. The API-maintenance story uses the separate contract break — never mix the two.
+3. Wrap the adapter with runtime validation/error handling. On contract failure (missing `charges`), send a sanitized event to Sentinel's `/ingest/errors` (endpoint, observed `Stripe-Version`, message); show a stable user-facing error rather than crashing the app.
+4. Add adapter tests with a 2022-08-01 fixture and clear test command (`npm test`). The Devin incident packet supplies the 2022-11-15 docs/response evidence and requires a 2022-11-15 regression test in the repair PR.
+5. Keep the **feedback board** as a backup Feedback-agent source, publicly reachable through the deployed app.
+6. Deploy InvoicePilot (and confirm Sentinel's Convex HTTP routes are public) so the app, controlled gateway, docs mirror, and feedback board have stable public URLs.
+7. Draft submission answers, the 3-minute script (§D), disclosure list, and backup-video shot list.
 
-**Files:** `convex/http.ts`, `convex/incidents.ts`, `convex/docs.ts`, `convex/devin.ts`, monitor-creation script or dashboard notes.
-
-**Acceptance:** the controlled docs change produces `detected → gathering_context → diagnosing → repair_queued → repairing → validating → repair_proposed`, with diagnosis evidence, a passing regression test, and a real Devin PR. Running the broken integration independently enters the same flow; running it during the proactive incident attaches evidence without creating a second session.
+**Acceptance:** InvoicePilot builds and deploys; feedback bugs reproduce; payment collection works under 2022-08-01; activating 2022-11-15 causes a real, captured adapter failure; the docs mirror reflects the upgrade; and a cold Devin session given the incident packet can patch the adapter, add the regression test, pass the suite, and open a PR without touching the vendor.
 
 ---
 
 ### Phase 4 — Dashboard *(Moein; ref 11:15–15:00)*
 
-**Objective:** adapt ReactBits Application UI into the live demo surface instead of designing dashboard chrome from scratch.
+**Objective:** adapt ReactBits Application UI into the live demo surface — integration-first, instead of designing dashboard chrome from scratch.
 
 **Prereqs:** P0 has installed ReactBits Pro `dashboard-4`, the operations-dashboard template with a service status board and incident list. Build against hand-inserted rows first; every data region becomes a Convex `useQuery` so P1–P3 results appear without refresh.
 
 **Deliverables**
 1. Preserve the ReactBits app shell, responsive layout, spacing, typography, status treatments, and card/list primitives. Remove example branding and static demo metrics; do not build a second design system or add charts without useful data.
-2. Adapt the template's service selector/status board into the Revolut/Acme product switcher and integration-health summary. Observer products show a clear "monitoring only" badge where repair actions would appear.
-3. Adapt the incident list into two concise views: **Feedback clusters** with threshold/status and **API incidents** with trigger source, impact verdict, repair state, and PR status.
-4. Add one detail drawer using the installed primitives for the auditable timeline: trigger received → context gathered → impact evidence → Devin state → test result → PR link. The same drawer shows complaint evidence or API code/docs evidence without adding another route.
+2. **Hero = integration health.** Adapt the template's service status board into the integration summary: provider, endpoint, active contract version, monitor status, last check, current incident state.
+3. **Primary view = API incidents** with trigger source(s), impact verdict, repair state, and PR status. **Secondary tab = Feedback clusters** with threshold/status.
+4. Add one detail drawer using the installed primitives for the auditable incident timeline: trigger received → context gathered → impact evidence (docs excerpt + cited adapter lines) → Devin state → test result → PR link. The same drawer shows complaint evidence for feedback clusters without adding another route.
 5. Add the onboarding form for product/repo/feedback fields and one optional API integration. Use the installed ReactBits/shadcn primitives; install another Application UI block only if the form cannot be assembled quickly from what Dashboard 4 already provides.
-6. Add restrained demo controls: Scan now · Seed complaints · Force threshold · Reset vendor · Activate v2 break · Run integration. Keep them visually separated from normal product actions.
+6. Add restrained demo controls: Reset vendor (v2022-08-01) · Upgrade vendor (v2022-11-15) · Run monitor now · Run integration · Scan now · Seed complaints · Force threshold. Keep them visually separated from normal product actions.
 7. Replace every template array/placeholder with Convex data or an explicit empty/loading state. Treat `useQuery === undefined` as loading and preserve the template's responsive behavior.
 
 **Files:** installed ReactBits source under `src/` plus the dashboard page and small data-mapping components; no backend files.
 
-**Acceptance:** Dashboard 4's original sample data is gone; both products render from Convex; a stranger can follow complaint → cluster → Devin → PR and API trigger → impact verdict → tests → repair PR; mobile/desktop layouts remain usable; no ReactBits license credential is bundled or committed.
+**Acceptance:** Dashboard 4's original sample data is gone; everything renders from Convex; a stranger can follow docs change → impact verdict → tests → repair PR (and complaint → cluster → Devin → PR in the secondary tab); mobile/desktop layouts remain usable; no ReactBits license credential is bundled or committed.
 
 ---
 
-### Phase 5 — Demo assets: Acme repo + controlled vendor *(Ash, driven through Devin chat; ref 11:15–14:30)*
+### Phase 5 — Feedback agent *(SECONDARY; Shashwat after the P2 spine lands; ref 14:00–15:30)*
 
-**Objective:** everything Devin fixes and Context watches for the Acme story. Built by prompting Devin interactively—which is itself demo-able meaningful Devin usage.
+**Objective:** real complaints from InvoicePilot's real sources, clustered by Claude, feeding Phase 1's threshold check. **Explicit cut line: if this is behind at 15:00, ship `seed.demoComplaints` + `forceThreshold` and rehearse that path instead — the primary story must never be starved.**
 
-**Prereqs:** P0 (repo exists). Coordinate feedback bug wording with Phase 2.6 and the API contract with Phase 3.
+**Prereqs:** P0; P1 `threshold.check`; P3 subreddit + feedback board exist. Uses R4, R6.
 
 **Deliverables**
-1. Devin scaffolds `acme-invoicing`: small Vite/Next invoicing app—invoices, CSV export, and multi-currency totals through one isolated `src/lib/payflow.ts` adapter. PayFlow is a controlled rates API backed by real Frankfurter data, so the upstream values are realistic while the response contract is deterministic. Include a strong `README.md` + `AGENTS.md` with run/test commands.
-2. Keep the existing small feedback bugs for Feedback Sentinel (CSV header and one optional form/rate bug); do not add more. The API-maintenance story uses one separate controlled contract break.
-3. **Controlled PayFlow contract:** Sentinel's Convex HTTP routes expose a public rates endpoint and matching docs page. v1 returns `{version: "v1", base, rates: {EUR: 0.86}}`; one demo mutation switches both endpoint and docs to v2 returning `{version: "v2", base, data: [{currency: "EUR", rate: 0.86}]}`. Acme can report the observed version but continues expecting `rates`, producing a genuine adapter failure.
-4. Wrap the PayFlow adapter with runtime validation/error handling. On contract failure, send a sanitized event to Sentinel's `/ingest/errors`; show a stable user-facing error rather than crashing the app.
-5. Add adapter tests with a v1 fixture and clear test command. The Devin incident packet supplies the v2 docs/response evidence and requires a v2 regression test in the repair PR.
-6. Keep the **feedback board** as Acme's backup Feedback Sentinel source, publicly reachable through the deployed app.
-7. Deploy Acme and the Sentinel Convex HTTP routes so the app, controlled API, docs, and feedback board have stable public URLs.
-8. Draft submission answers, the 3-minute script (§D), disclosure list, and backup-video shot list.
+1. `ingest.scrapeSource` action per source recipe in R4 (reddit | board), storing raw results.
+2. Extraction via Claude (R6). Normalize to `reviews` rows; dedupe on `hash` (skip existing before clustering — protects against re-scrapes).
+3. `cluster.assign` action per new review (R6 clustering prompt) + `cluster.apply` mutation (atomic attach/create/increment → calls `threshold.check` from P1).
+4. `crons.interval("scrape-all", {minutes: 10}, ...)` over the product's configured sources + public `scanNow(productId)` mutation for the dashboard button.
+5. **Real-data pass:** teammates post 5–8 real complaint posts on r/&lt;InvoicePilot&gt; describing the planted bugs (coordinate wording with Phase 3's bug list); confirm scrape → extract → cluster works. If Reddit auto-filters the new subreddit, switch to the feedback board (P3.5) — same pipeline, different URL.
+6. `seed.demoComplaints` mutation (~25 synthetic complaints matching planted bugs) — final fallback only.
 
-**Acceptance:** Acme builds and deploys; feedback bugs reproduce; v1 currency conversion works; activating v2 causes a real, captured adapter failure; the docs page reflects v2; and a cold Devin session given the incident packet can patch the adapter, add the regression test, pass the suite, and open a PR without touching the vendor.
+**Files:** `convex/ingest.ts`, `convex/cluster.ts`, `convex/crons.ts`, `convex/seed.ts`.
+
+**Acceptance:** "Scan now" pulls the real subreddit posts and clusters them into the planted-bug clusters; the CSV cluster crossing 5/5 launches a real Devin fix PR; re-running scrapes creates zero duplicates.
 
 ---
 
@@ -444,14 +491,14 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 
 **Objective:** the demo cannot fail twice in a row.
 
-**Prereqs:** P1–P5.
+**Prereqs:** P1–P4 (P5 or its seeded fallback).
 
 **Deliverables**
-1. Pick ONE deployment as demo-prod (`npx convex deploy` or a designated dev deployment); env vars + monitors pointed at it.
-2. Two full end-to-end rehearsals: Revolut observer view → Acme feedback trigger → Devin PR → reset PayFlow v1 → activate the v2 contract/docs → run Context monitor → impact verdict → Devin session → passing test + repair PR. Separately verify that the Acme runtime failure enters or attaches to the same incident.
+1. Pick ONE deployment as demo-prod (`npx convex deploy` or a designated dev deployment); env vars + monitor pointed at it.
+2. Two full end-to-end rehearsals: reset vendor → upgrade to 2022-11-15 → run monitor → signed webhook → impact verdict with cited evidence → Devin session → passing regression test + repair PR → run InvoicePilot's payment flow and verify the genuine runtime failure attaches to the same incident. Then the feedback beat: post (or seed) → cluster → threshold → Devin PR.
 3. Pre-warm strategy: launch a real API-repair session about 30 minutes before judging so a **finished tested PR** exists to show; the live-triggered one runs during the talk. Keep the best rehearsal PR as backup evidence.
 4. Record backup video (rules allow it).
-5. Morning-cached Revolut data verified present.
+5. Verify `cachedResponse` fallback works with wifi off (airplane-mode test on the gateway path).
 6. **16:30: submit.** Deadline 17:00 is strict.
 
 **Acceptance:** rehearsal #2 runs without touching code; submission form complete.
@@ -460,17 +507,17 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 
 ### Phase 7 — Reactive incident hardening *(STRETCH — only if P1–P5 green at the 15:00 checkpoint)*
 
-**Objective:** add production-style grouping and presentation on top of Phase 3's already-working single runtime-failure trigger.
+**Objective:** add production-style grouping and presentation on top of Phase 2's already-working runtime-failure trigger.
 
-**Prereqs:** P3 shared incident flow, P4 dashboard, P5 Acme deployed.
+**Prereqs:** P2 shared incident flow, P3 InvoicePilot deployed, P4 dashboard.
 
 **Deliverables**
 1. Group repeated runtime events by integration and fingerprint; show count and first/last seen without creating additional incidents or Devin sessions.
 2. Add an optional spike policy (for example, 10 matching failures in 2 minutes) as a severity escalation only. It must not bypass diagnosis or the impact gate.
 3. Add a red incident banner and clearer live feed treatment for confirmed runtime impact.
-4. Add a safe demo control that calls the changed PayFlow integration and surfaces its genuine failure; do not add a generic flag that makes unrelated application code throw.
+4. Add a safe demo control that calls the changed Stripe integration and surfaces its genuine failure; do not add a generic flag that makes unrelated application code throw.
 
-**Acceptance:** repeated calls to the broken PayFlow integration update one incident in real time, preserve the docs evidence and diagnosis, and produce at most one repair session.
+**Acceptance:** repeated calls to the broken integration update one incident in real time, preserve the docs evidence and diagnosis, and produce at most one repair session.
 
 ---
 
@@ -478,22 +525,24 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 
 | Clock | What |
 |---|---|
-| 10:00–10:30 | Registration. Ash: submission link, credit redemption, ask Context rep about `country`-proxy plan tier |
+| 10:00–10:30 | Registration. Ash: submission link, credit redemption, verify Stripe test keys work from venue network |
 | 10:30–11:15 | **Phase 0** (all together) |
-| 11:15–15:00 | **P1→P3 (Iyad) ∥ P2 (Shashwat) ∥ P4 (Moein) ∥ P5 (Ash + Devin chat)** |
+| 11:15–14:00 | **P1→P2 (Iyad) ∥ P2 gateway/ingest (Shashwat) ∥ P4 (Moein) ∥ P3 (Ash + Devin chat)** |
 | 12:00 | **Hard checkpoint: P1.4 smoke test** — Devin PR from a Convex action. Broken = lunch-table topic #1 |
 | 12:30–13:00 | Lunch + status sync |
-| 15:00 | **Checkpoint: all green → Phase 7; anything red → all hands on it, P7 cut** |
+| 14:00 | **Primary checkpoint: P2 acceptance** — docs change → impact verdict → Devin repair PR, end to end. Broken = all hands on it, P5 stays seeded |
+| 14:00–15:30 | **P5 feedback agent (Shashwat)** ∥ others polish P2–P4 |
+| 15:00 | **Checkpoint: all green → Phase 7; P5 behind → cut to seeds + forceThreshold** |
 | 15:15–16:30 | **Phase 6** |
 | 16:30 | **SUBMIT** (17:00 strict) |
 
 ## §D. Demo script (3 min)
 
-1. **(0:00)** "Every team has three streams of bug reports they ignore: reviews, upstream docs, production errors. We built the team that reads them — and fixes them." **Open on Revolut**: real Trustpilot/Play/Reddit complaints, clustered live. "This is Sentinel watching a real business, today. Now here's what happens when Sentinel also has your repo."
-2. **(0:45)** **Switch to Acme.** Post a real complaint on r/&lt;AcmeName&gt; (or show this morning's real posts) → Scan now → clustering live → "CSV export broken" hits 5/5 → Devin session card appears.
-3. **(1:30)** Cut to the pre-warmed session's **open PR on GitHub**: diff fixing the exact bug, PR body citing the user complaints. "Complaint to reviewable fix, zero humans."
-4. **(2:00)** API Integration Maintainer: activate PayFlow v2 and run the Context.dev monitor → signed webhook creates an incident → latest docs arrive → timeline names the changed response field and proves Acme uses it → Devin session launches. Cut to the pre-warmed API PR with the adapter diff and passing regression test. "It does not patch every docs change; it proves impact first."
-5. **(2:35)** Run Acme's now-broken integration → the genuine runtime failure appears as a second trigger on the same incident, not a duplicate repair. If time is tight, show this event already attached from rehearsal.
+1. **(0:00)** "Your product is a bundle of other people's APIs — and any of them can break you with a docs page. In 2022 Stripe removed `charges` from PaymentIntent. Thousands of integrations broke. We built the engineer that catches that — and ships the fix." **Open on InvoicePilot working**: invoices, payments collecting, dashboard green, integration health showing Stripe on 2022-08-01.
+2. **(0:30)** **The vendor upgrades.** Click Upgrade vendor → the docs mirror now shows the 2022-11-15 changelog → Run monitor now → Context.dev's signed webhook lands → incident appears: `detected → gathering_context → diagnosing`. The timeline names the removed `charges` field **and cites the exact adapter line in the repo that reads it**. Verdict: `impacted`. "It doesn't patch every docs change — it proves impact first."
+3. **(1:15)** Devin session card appears automatically. Cut to the pre-warmed session's **open PR on GitHub**: adapter diff (`charges.data[0]` → `latest_charge`), new regression test, suite green, PR body citing the docs evidence. Incident: `repair_proposed`. "Docs change to reviewable, tested fix — zero humans. And it never merges; that's ours."
+4. **(2:00)** **The runtime confirms.** Collect a payment in InvoicePilot → the genuine adapter failure appears as a second trigger on the same incident — corroborating evidence, not a duplicate repair. "Proactive and reactive, one spine."
+5. **(2:25)** **Second act:** post a real complaint on r/&lt;InvoicePilot&gt; (or show this morning's real posts) → Scan now → clustering live → "CSV export broken" hits 5/5 → Devin session card → cut to the feedback fix PR citing the users' own words. "Same orchestration, different signal."
 6. **(2:50)** "Context.dev is the senses, Convex is the control plane, and Devin is the hands: detect, understand, contextualize, validate, remediate. The output is a reviewable PR—not an automatic deployment."
 
 ## §K. Risks
@@ -502,19 +551,20 @@ Dependency graph: **P0 → (P1 ∥ P2 ∥ P3 ∥ P4 ∥ P5) → P6 → P7(stretc
 |---|---|
 | Devin slow/stuck during judging | Pre-warmed finished PR; live session runs in background; backup video; rehearsal PR as exhibit |
 | Devin key/plan issue | Verified tonight via SETUP.md curl |
-| New subreddit auto-filtered | Aged account creates it tonight + test post tonight; backup = feedback board (P5.4, same pipeline); final fallback = seeds |
-| Venue wifi kills live scraping | Morning-cached Revolut data; Acme reddit posts made in the morning; seeds |
-| Trustpilot proxy needs paid Context tier | Reddit + Play still real for Revolut; ask rep at opening |
+| Stripe test key blocked / venue network kills upstream calls | `cachedResponse` fallback in the gateway (verified in P6 airplane-mode test); raw-curl verification at registration |
+| Gateway shaping drifts from real Stripe shapes | R9 shapes copied from the real 2022-11-15 changelog + object reference; sanity-check against docs.stripe.com during P2 |
+| New subreddit auto-filtered | Aged account creates it tonight + test post tonight; backup = feedback board (P3.5, same pipeline); final fallback = seeds — affects the secondary agent only |
+| Venue wifi kills live scraping | InvoicePilot reddit posts made in the morning; board reachable; seeds |
 | ReactBits Pro registry/license unavailable | Verify Pro/Ultimate access before Phase 0; install Dashboard 4 immediately; never commit the local license key |
 | Threshold doesn't fire on stage | `forceThreshold` admin button |
-| Devin fixes the wrong thing | Isolated `payflow.ts` adapter, explicit v1/v2 evidence, required regression test, minimal-diff prompt, two rehearsals |
+| Devin fixes the wrong thing | Isolated `stripe.ts` adapter, explicit before/after contract evidence, required regression test, minimal-diff prompt, two rehearsals |
 | Docs change is irrelevant | Deterministic endpoint overlap + structured impact verdict; `not_impacted` stops before Devin |
 | Proactive and reactive triggers duplicate work | Shared fingerprint and one incident/session guard; second trigger only appends evidence |
 | Context monitor is slow during judging | Pre-run a real monitor event; keep Run Monitor Now control, persisted incident timeline, and backup video |
 | Devin `blocked` mid-session | Auto-nudge (P1.2) |
 | Merge conflicts | Schema+stubs first; phases own disjoint files; frequent small pushes |
-| Time overrun | Cut P7 grouping/polish; retain Phase 3's proactive path and single reactive event through the shared spine |
+| Time overrun | Cut P7 entirely; cut P5 to seeds + forceThreshold; the P2 spine is never cut |
 
 ## §C. Cost guards
 
-`max_acu_limit: 5` per session, ~4–8 sessions all day — within credits. `claude-haiku-4-5` for extraction/clustering (~fractions of a cent). Context: `maxAgeMs=0` only for demo moments; monitors at 10-min interval; 15k event credits ample. Convex free tier: poll cron runs only while sessions active.
+`max_acu_limit: 5` per session, ~4–8 sessions all day — within credits. `claude-haiku-4-5` for extraction/clustering/diagnosis (~fractions of a cent). Context: `maxAgeMs=0` only for demo moments; one monitor at 10-min interval; 15k event credits ample. Stripe test mode is free. Convex free tier: poll cron runs only while sessions active.
