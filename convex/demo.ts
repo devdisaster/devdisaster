@@ -170,8 +170,6 @@ export const resetDemo = mutation({
       "errors",
       "sessions",
       "events",
-      "clusters",
-      "reviews",
     ] as const) {
       for (const row of await ctx.db.query(table).collect()) {
         await ctx.db.delete(table, row._id);

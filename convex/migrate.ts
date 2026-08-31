@@ -8,8 +8,6 @@ import { internalMutation } from "./_generated/server";
 const ALL_TABLES = {
   products: true,
   integrations: true,
-  reviews: true,
-  clusters: true,
   sessions: true,
   triggerEvents: true,
   docChanges: true,

@@ -15,8 +15,7 @@ import {
 
 const launchArgs = {
   productId: v.id("products"),
-  incidentId: v.optional(v.id("incidents")),
-  clusterId: v.optional(v.id("clusters")),
+  incidentId: v.id("incidents"),
 };
 
 const launchResult = v.object({
@@ -36,8 +35,7 @@ const reservationResult = v.object({
 
 type LaunchArgs = {
   productId: Id<"products">;
-  incidentId?: Id<"incidents">;
-  clusterId?: Id<"clusters">;
+  incidentId: Id<"incidents">;
 };
 
 type LaunchResult = {
@@ -56,15 +54,6 @@ type IncidentPacket = {
   docChanges: Doc<"docChanges">[];
   errors: Doc<"errors">[];
 };
-
-type FeedbackPacket = {
-  kind: "feedback";
-  product: Doc<"products">;
-  cluster: Doc<"clusters">;
-  reviews: Doc<"reviews">[];
-};
-
-type LaunchPacket = IncidentPacket | FeedbackPacket;
 
 type Reservation = {
   status: "reserved" | "duplicate" | "skipped";
@@ -85,58 +74,36 @@ const structuredOutputSchema = {
   },
 };
 
-const requireSingleTrigger = (
-  incidentId: Id<"incidents"> | undefined,
-  clusterId: Id<"clusters"> | undefined,
-) => {
-  if ((incidentId === undefined) === (clusterId === undefined)) {
-    throw new Error("Exactly one of incidentId or clusterId is required");
-  }
-};
-
 export const prepareLaunch = internalQuery({
   args: launchArgs,
   returns: v.any(),
-  handler: async (ctx, { productId, incidentId, clusterId }) => {
-    requireSingleTrigger(incidentId, clusterId);
+  handler: async (ctx, { productId, incidentId }) => {
     const product = await ctx.db.get("products", productId);
     if (!product) throw new Error("Product not found");
 
-    if (incidentId) {
-      const incident = await ctx.db.get("incidents", incidentId);
-      if (!incident || incident.productId !== productId) {
-        throw new Error("Incident does not belong to the product");
-      }
-      const integration = await ctx.db.get("integrations", incident.integrationId);
-      if (!integration || integration.productId !== productId) {
-        throw new Error("Incident integration not found");
-      }
-      const [triggerEvents, docChanges, errors] = await Promise.all([
-        ctx.db
-          .query("triggerEvents")
-          .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
-          .collect(),
-        ctx.db
-          .query("docChanges")
-          .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
-          .collect(),
-        ctx.db
-          .query("errors")
-          .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
-          .collect(),
-      ]);
-      return { kind: "incident" as const, product, incident, integration, triggerEvents, docChanges, errors };
+    const incident = await ctx.db.get("incidents", incidentId);
+    if (!incident || incident.productId !== productId) {
+      throw new Error("Incident does not belong to the product");
     }
-
-    const cluster = await ctx.db.get("clusters", clusterId!);
-    if (!cluster || cluster.productId !== productId) {
-      throw new Error("Cluster does not belong to the product");
+    const integration = await ctx.db.get("integrations", incident.integrationId);
+    if (!integration || integration.productId !== productId) {
+      throw new Error("Incident integration not found");
     }
-    const reviews = await ctx.db
-      .query("reviews")
-      .withIndex("by_cluster", (q) => q.eq("clusterId", clusterId))
-      .collect();
-    return { kind: "feedback" as const, product, cluster, reviews };
+    const [triggerEvents, docChanges, errors] = await Promise.all([
+      ctx.db
+        .query("triggerEvents")
+        .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
+        .collect(),
+      ctx.db
+        .query("docChanges")
+        .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
+        .collect(),
+      ctx.db
+        .query("errors")
+        .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
+        .collect(),
+    ]);
+    return { kind: "incident" as const, product, incident, integration, triggerEvents, docChanges, errors };
   },
 });
 
@@ -209,152 +176,77 @@ ${diagnosis}
 If the evidence is insufficient or the code is not actually affected, report that instead of forcing a patch.`;
 };
 
-const feedbackPrompt = (packet: {
-  product: Doc<"products">;
-  cluster: Doc<"clusters">;
-  reviews: Doc<"reviews">[];
-}) => {
-  const reviews = packet.reviews.length
-    ? packet.reviews
-        .map(
-          (review) =>
-            `- [${review.source}${review.rating === undefined ? "" : `, ${review.rating}★`}] ${review.text}`,
-        )
-        .join("\n")
-    : `- [seed] ${packet.cluster.summary}`;
-
-  return `You are fixing a bug in the repository ${packet.product.repo}. Work on a new branch and open a pull request. Never merge or deploy.
-
-## Product context
-${packet.product.description}
-
-## Evidence: ${packet.cluster.count} user complaints, clustered as "${packet.cluster.title}"
-${reviews}
-
-## Task
-1. Reproduce/locate the issue described above in the codebase.
-2. Implement a minimal, safe fix. Do not refactor unrelated code.
-3. Run the test suite if present (see README/AGENTS.md for commands).
-4. Open a PR titled "fix: ${packet.cluster.title}" with a body that cites the user complaints.
-5. Report pr_url, summary, and root_cause in your structured output.
-
-Keep the diff small. If you cannot find the bug, open a draft PR documenting your investigation instead.`;
-};
-
 export const reserveLaunch = internalMutation({
   args: {
     ...launchArgs,
     prompt: v.string(),
   },
   returns: reservationResult,
-  handler: async (ctx, { productId, incidentId, clusterId, prompt }) => {
-    requireSingleTrigger(incidentId, clusterId);
+  handler: async (ctx, { productId, incidentId, prompt }) => {
     const product = await ctx.db.get("products", productId);
     if (!product) throw new Error("Product not found");
     if (!product.repo) {
       await ctx.db.insert("events", {
         productId,
         incidentId,
-        sentinel: incidentId ? "integration" : "feedback",
+        sentinel: "integration",
         message: "Devin launch skipped because this product is in observer mode (no repository configured).",
         level: "warn",
       });
       return { status: "skipped" as const, reason: "Product has no repository configured" };
     }
 
-    if (incidentId) {
-      const incident = await ctx.db.get("incidents", incidentId);
-      if (!incident || incident.productId !== productId) {
-        throw new Error("Incident does not belong to the product");
-      }
-      if (incident.sessionId) {
-        const session = await ctx.db.get("sessions", incident.sessionId);
-        return {
-          status: "duplicate" as const,
-          sessionId: incident.sessionId,
-          devinSessionId: session?.devinSessionId,
-          retryReservation: session?.status === "launching",
-        };
-      }
-      if (incident.status !== "repair_queued" || incident.diagnosisVerdict !== "impacted") {
-        await ctx.db.insert("events", {
-          productId,
-          incidentId,
-          sentinel: "integration",
-          message: "Devin launch rejected: incident is not an impacted repair_queued incident.",
-          level: "warn",
-        });
-        return { status: "skipped" as const, reason: "Incident is not eligible for repair" };
-      }
-      const existing = await ctx.db
-        .query("sessions")
-        .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
-        .first();
-      if (existing) {
-        await ctx.db.patch("incidents", incidentId, { sessionId: existing._id });
-        return {
-          status: "duplicate" as const,
-          sessionId: existing._id,
-          devinSessionId: existing.devinSessionId,
-          retryReservation: existing.status === "launching",
-        };
-      }
-      const sessionId = await ctx.db.insert("sessions", {
-        productId,
-        trigger: "incident",
-        incidentId,
-        devinSessionId: `pending:${incidentId}`,
-        devinUrl: "",
-        status: "launching",
-        prompt,
-      });
-      await ctx.db.patch("incidents", incidentId, { sessionId, status: "repairing" });
-      await ctx.db.insert("events", {
-        productId,
-        incidentId,
-        sentinel: "integration",
-        message: "Repair evidence accepted; launching Devin.",
-        level: "info",
-      });
-      return { status: "reserved" as const, sessionId, retryReservation: true };
+    const incident = await ctx.db.get("incidents", incidentId);
+    if (!incident || incident.productId !== productId) {
+      throw new Error("Incident does not belong to the product");
     }
-
-    const cluster = await ctx.db.get("clusters", clusterId!);
-    if (!cluster || cluster.productId !== productId) {
-      throw new Error("Cluster does not belong to the product");
-    }
-    if (cluster.sessionId) {
-      const session = await ctx.db.get("sessions", cluster.sessionId);
+    if (incident.sessionId) {
+      const session = await ctx.db.get("sessions", incident.sessionId);
       return {
         status: "duplicate" as const,
-        sessionId: cluster.sessionId,
+        sessionId: incident.sessionId,
         devinSessionId: session?.devinSessionId,
         retryReservation: session?.status === "launching",
       };
     }
-    if (cluster.status !== "triggered") {
+    if (incident.status !== "repair_queued" || incident.diagnosisVerdict !== "impacted") {
       await ctx.db.insert("events", {
         productId,
-        sentinel: "feedback",
-        message: "Devin launch rejected: feedback cluster has not been triggered.",
+        incidentId,
+        sentinel: "integration",
+        message: "Devin launch rejected: incident is not an impacted repair_queued incident.",
         level: "warn",
       });
-      return { status: "skipped" as const, reason: "Cluster is not eligible for repair" };
+      return { status: "skipped" as const, reason: "Incident is not eligible for repair" };
+    }
+    const existing = await ctx.db
+      .query("sessions")
+      .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
+      .first();
+    if (existing) {
+      await ctx.db.patch("incidents", incidentId, { sessionId: existing._id });
+      return {
+        status: "duplicate" as const,
+        sessionId: existing._id,
+        devinSessionId: existing.devinSessionId,
+        retryReservation: existing.status === "launching",
+      };
     }
     const sessionId = await ctx.db.insert("sessions", {
       productId,
-      trigger: "feedback",
-      clusterId,
-      devinSessionId: `pending:${clusterId}`,
+      trigger: "incident",
+      incidentId,
+      devinSessionId: `pending:${incidentId}`,
       devinUrl: "",
       status: "launching",
       prompt,
     });
-    await ctx.db.patch("clusters", clusterId!, { sessionId });
+    await ctx.db.patch("incidents", incidentId, { sessionId, status: "repairing" });
     await ctx.db.insert("events", {
       productId,
-      sentinel: "feedback",
-      message: `Feedback cluster "${cluster.title}" triggered a Devin repair.`,
+      incidentId,
+      sentinel: "integration",
+      message: "Repair evidence accepted; launching Devin.",
       level: "info",
     });
     return { status: "reserved" as const, sessionId, retryReservation: true };
@@ -383,7 +275,7 @@ export const completeLaunch = internalMutation({
     await ctx.db.insert("events", {
       productId: session.productId,
       incidentId: session.incidentId,
-      sentinel: session.incidentId ? "integration" : "feedback",
+      sentinel: "integration",
       message: `Devin session started (${status}).`,
       level: "info",
     });
@@ -434,9 +326,8 @@ export const launchPlain = internalAction({
   args: launchArgs,
   returns: launchResult,
   handler: async (ctx, args: LaunchArgs): Promise<LaunchResult> => {
-    requireSingleTrigger(args.incidentId, args.clusterId);
-    const packet: LaunchPacket = await ctx.runQuery(internal.devin.prepareLaunch, args);
-    const prompt: string = packet.kind === "incident" ? incidentPrompt(packet) : feedbackPrompt(packet);
+    const packet: IncidentPacket = await ctx.runQuery(internal.devin.prepareLaunch, args);
+    const prompt: string = incidentPrompt(packet);
     const reservation: Reservation = await ctx.runMutation(internal.devin.reserveLaunch, { ...args, prompt });
     if (reservation.status === "skipped") {
       return { status: "skipped" as const, reason: reservation.reason };
@@ -468,7 +359,7 @@ export const launchPlain = internalAction({
           prompt,
           idempotent: true,
           max_acu_limit: 5,
-          title: `Kevin (not Devin): ${packet.kind === "incident" ? packet.incident.title : packet.cluster.title}`,
+          title: `Kevin (not Devin): ${packet.incident.title}`,
           structured_output_schema: structuredOutputSchema,
         }),
       });
@@ -675,12 +566,11 @@ export const applyPoll = internalMutation({
     if (payload.testSummary) patch.testSummary = payload.testSummary;
     await ctx.db.patch("sessions", payload.sessionId, patch);
 
-    const sentinel = session.incidentId ? "integration" : "feedback";
     if (session.status !== payload.status) {
       await ctx.db.insert("events", {
         productId: session.productId,
         incidentId: session.incidentId,
-        sentinel,
+        sentinel: "integration",
         message: `Devin session status changed: ${session.status} → ${payload.status}.`,
         level: payload.status === "blocked" ? "warn" : "info",
       });
@@ -689,7 +579,7 @@ export const applyPoll = internalMutation({
       await ctx.db.insert("events", {
         productId: session.productId,
         incidentId: session.incidentId,
-        sentinel,
+        sentinel: "integration",
         message: `Devin opened pull request${payload.prNumber ? ` #${payload.prNumber}` : ""}.`,
         level: "info",
       });
@@ -698,7 +588,7 @@ export const applyPoll = internalMutation({
       await ctx.db.insert("events", {
         productId: session.productId,
         incidentId: session.incidentId,
-        sentinel,
+        sentinel: "integration",
         message: `Devin reported tests ${payload.testStatus}${payload.testSummary ? `: ${payload.testSummary}` : "."}`,
         level: payload.testStatus === "failed" ? "critical" : "info",
       });
@@ -745,31 +635,6 @@ export const applyPoll = internalMutation({
           level: "critical",
         });
       }
-      return null;
-    }
-
-    if (
-      session.clusterId &&
-      (finished || payload.status === "blocked") &&
-      payload.prUrl
-    ) {
-      const cluster = await ctx.db.get("clusters", session.clusterId);
-      if (cluster && cluster.status === "triggered") {
-        await ctx.db.patch("clusters", cluster._id, { status: "pr_open" });
-        await ctx.db.insert("events", {
-          productId: session.productId,
-          sentinel: "feedback",
-          message: `Feedback repair PR opened for "${cluster.title}".`,
-          level: "info",
-        });
-      }
-    } else if (session.clusterId && (finished || terminalFailure)) {
-      await ctx.db.insert("events", {
-        productId: session.productId,
-        sentinel: "feedback",
-        message: "Feedback repair session ended without a pull request; the cluster remains triggered for review.",
-        level: "critical",
-      });
     }
     return null;
   },

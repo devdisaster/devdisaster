@@ -5,12 +5,9 @@ import { v } from "convex/values";
 export default defineSchema({
   products: defineTable({
     name: v.string(),
-    description: v.string(),           // fed into clustering + Devin prompts
+    description: v.string(),           // fed into Devin prompts
     repo: v.optional(v.string()),      // "org/invoicepilot" — ABSENT = observer mode (no Devin)
-    subreddit: v.optional(v.string()),
-    feedbackUrl: v.optional(v.string()), // public feedback-board page
     docsUrls: v.array(v.string()),
-    threshold: v.number(),
   }),
 
   integrations: defineTable({          // one InvoicePilot integration for the hackathon
@@ -28,32 +25,9 @@ export default defineSchema({
     enabled: v.boolean(),
   }).index("by_product", ["productId"]).index("by_monitor", ["monitorId"]),
 
-  reviews: defineTable({
-    productId: v.id("products"),
-    source: v.union(v.literal("reddit"), v.literal("board"), v.literal("seed")),
-    author: v.string(),
-    rating: v.optional(v.number()),
-    text: v.string(),
-    url: v.optional(v.string()),
-    publishedAt: v.optional(v.string()),
-    hash: v.string(),                  // sha256(source+author+text) for dedupe
-    clusterId: v.optional(v.id("clusters")),
-  }).index("by_hash", ["hash"]).index("by_product", ["productId"]).index("by_cluster", ["clusterId"]),
-
-  clusters: defineTable({
-    productId: v.id("products"),
-    title: v.string(),                 // "CSV export drops header row"
-    summary: v.string(),
-    kind: v.union(v.literal("bug"), v.literal("feature_request"), v.literal("other")),
-    count: v.number(),
-    status: v.union(v.literal("open"), v.literal("triggered"), v.literal("pr_open"), v.literal("dismissed")),
-    sessionId: v.optional(v.id("sessions")),
-  }).index("by_product", ["productId"]),
-
   sessions: defineTable({              // Devin agent runs
     productId: v.id("products"),
-    trigger: v.union(v.literal("feedback"), v.literal("docs"), v.literal("incident")),
-    clusterId: v.optional(v.id("clusters")),
+    trigger: v.literal("incident"),
     incidentId: v.optional(v.id("incidents")),
     devinSessionId: v.string(),
     devinUrl: v.string(),
@@ -122,7 +96,7 @@ export default defineSchema({
   events: defineTable({                // war-room feed — EVERY state change posts here
     productId: v.id("products"),
     incidentId: v.optional(v.id("incidents")),
-    sentinel: v.string(),              // "integration" | "feedback" | "system"
+    sentinel: v.string(),              // "integration" | "system"
     message: v.string(),
     level: v.union(v.literal("info"), v.literal("warn"), v.literal("critical")),
   }).index("by_product", ["productId"]).index("by_incident", ["incidentId"]),
