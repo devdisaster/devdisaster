@@ -21,7 +21,10 @@ export const loadIncidentContext = internalQuery({
   handler: async (ctx, { incidentId }): Promise<IncidentContext> => {
     const incident = await ctx.db.get("incidents", incidentId);
     if (!incident) throw new Error("Incident not found");
-    const integration = await ctx.db.get("integrations", incident.integrationId);
+    const integration = await ctx.db.get(
+      "integrations",
+      incident.integrationId,
+    );
     if (!integration) throw new Error("Incident integration not found");
     const product = await ctx.db.get("products", incident.productId);
     if (!product) throw new Error("Incident product not found");
@@ -39,7 +42,14 @@ export const loadIncidentContext = internalQuery({
         .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
         .collect(),
     ]);
-    return { incident, integration, product, triggerEvents, docChanges, errors };
+    return {
+      incident,
+      integration,
+      product,
+      triggerEvents,
+      docChanges,
+      errors,
+    };
   },
 });
 
@@ -74,7 +84,11 @@ export const retrieveDocs = async (
           success?: boolean;
           markdown?: string;
         };
-        if (payload.success && typeof payload.markdown === "string" && payload.markdown.trim()) {
+        if (
+          payload.success &&
+          typeof payload.markdown === "string" &&
+          payload.markdown.trim()
+        ) {
           return {
             text: payload.markdown.slice(0, MAX_EXCERPT_CHARS),
             via: "context.dev",
@@ -355,7 +369,9 @@ export const gatherAndDiagnose = internalAction({
         ...diagnosis.evidence,
         ...(codeMatches
           ? []
-          : ["Note: cited code lines were normalized against the retrieved file."]),
+          : [
+              "Note: cited code lines were normalized against the retrieved file.",
+            ]),
       ];
       await apply(
         "impacted",

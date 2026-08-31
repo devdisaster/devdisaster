@@ -14,25 +14,24 @@ export const overview = query({
       products.find((candidate) => Boolean(candidate.repo)) ?? products[0];
     if (!product) return null;
 
-    const [integrations, incidents, sessions, events] =
-      await Promise.all([
-        ctx.db
-          .query("integrations")
-          .withIndex("by_product", (q) => q.eq("productId", product._id))
-          .collect(),
-        ctx.db
-          .query("incidents")
-          .withIndex("by_product", (q) => q.eq("productId", product._id))
-          .collect(),
-        ctx.db
-          .query("sessions")
-          .withIndex("by_product", (q) => q.eq("productId", product._id))
-          .collect(),
-        ctx.db
-          .query("events")
-          .withIndex("by_product", (q) => q.eq("productId", product._id))
-          .collect(),
-      ]);
+    const [integrations, incidents, sessions, events] = await Promise.all([
+      ctx.db
+        .query("integrations")
+        .withIndex("by_product", (q) => q.eq("productId", product._id))
+        .collect(),
+      ctx.db
+        .query("incidents")
+        .withIndex("by_product", (q) => q.eq("productId", product._id))
+        .collect(),
+      ctx.db
+        .query("sessions")
+        .withIndex("by_product", (q) => q.eq("productId", product._id))
+        .collect(),
+      ctx.db
+        .query("events")
+        .withIndex("by_product", (q) => q.eq("productId", product._id))
+        .collect(),
+    ]);
 
     const sessionById = new Map(
       sessions.map((session) => [session._id, session]),

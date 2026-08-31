@@ -1,5 +1,5 @@
-import Dashboard4 from "@/components/blocks/dashboard-4";
+import KevinDashboard from "@/components/kevin-dashboard";
 
 export default function App() {
-  return <Dashboard4 />;
+  return <KevinDashboard />;
 }

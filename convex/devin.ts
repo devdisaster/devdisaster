@@ -19,14 +19,22 @@ const launchArgs = {
 };
 
 const launchResult = v.object({
-  status: v.union(v.literal("launched"), v.literal("duplicate"), v.literal("skipped")),
+  status: v.union(
+    v.literal("launched"),
+    v.literal("duplicate"),
+    v.literal("skipped"),
+  ),
   sessionId: v.optional(v.id("sessions")),
   devinSessionId: v.optional(v.string()),
   reason: v.optional(v.string()),
 });
 
 const reservationResult = v.object({
-  status: v.union(v.literal("reserved"), v.literal("duplicate"), v.literal("skipped")),
+  status: v.union(
+    v.literal("reserved"),
+    v.literal("duplicate"),
+    v.literal("skipped"),
+  ),
   sessionId: v.optional(v.id("sessions")),
   devinSessionId: v.optional(v.string()),
   reason: v.optional(v.string()),
@@ -85,7 +93,10 @@ export const prepareLaunch = internalQuery({
     if (!incident || incident.productId !== productId) {
       throw new Error("Incident does not belong to the product");
     }
-    const integration = await ctx.db.get("integrations", incident.integrationId);
+    const integration = await ctx.db.get(
+      "integrations",
+      incident.integrationId,
+    );
     if (!integration || integration.productId !== productId) {
       throw new Error("Incident integration not found");
     }
@@ -103,7 +114,15 @@ export const prepareLaunch = internalQuery({
         .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
         .collect(),
     ]);
-    return { kind: "incident" as const, product, incident, integration, triggerEvents, docChanges, errors };
+    return {
+      kind: "incident" as const,
+      product,
+      incident,
+      integration,
+      triggerEvents,
+      docChanges,
+      errors,
+    };
   },
 });
 
@@ -115,9 +134,13 @@ const incidentPrompt = (packet: {
   docChanges: Doc<"docChanges">[];
   errors: Doc<"errors">[];
 }) => {
-  const sources = [...new Set(packet.triggerEvents.map((event) => event.source))];
+  const sources = [
+    ...new Set(packet.triggerEvents.map((event) => event.source)),
+  ];
   const sourceSummary =
-    sources.length === 2 ? "docs change and runtime failure" : sources[0] ?? "incident evidence";
+    sources.length === 2
+      ? "docs change and runtime failure"
+      : (sources[0] ?? "incident evidence");
   const docsEvidence = packet.docChanges.length
     ? packet.docChanges
         .map(
@@ -190,10 +213,14 @@ export const reserveLaunch = internalMutation({
         productId,
         incidentId,
         sentinel: "integration",
-        message: "Devin launch skipped because this product is in observer mode (no repository configured).",
+        message:
+          "Devin launch skipped because this product is in observer mode (no repository configured).",
         level: "warn",
       });
-      return { status: "skipped" as const, reason: "Product has no repository configured" };
+      return {
+        status: "skipped" as const,
+        reason: "Product has no repository configured",
+      };
     }
 
     const incident = await ctx.db.get("incidents", incidentId);
@@ -209,15 +236,22 @@ export const reserveLaunch = internalMutation({
         retryReservation: session?.status === "launching",
       };
     }
-    if (incident.status !== "repair_queued" || incident.diagnosisVerdict !== "impacted") {
+    if (
+      incident.status !== "repair_queued" ||
+      incident.diagnosisVerdict !== "impacted"
+    ) {
       await ctx.db.insert("events", {
         productId,
         incidentId,
         sentinel: "integration",
-        message: "Devin launch rejected: incident is not an impacted repair_queued incident.",
+        message:
+          "Devin launch rejected: incident is not an impacted repair_queued incident.",
         level: "warn",
       });
-      return { status: "skipped" as const, reason: "Incident is not eligible for repair" };
+      return {
+        status: "skipped" as const,
+        reason: "Incident is not eligible for repair",
+      };
     }
     const existing = await ctx.db
       .query("sessions")
@@ -241,7 +275,10 @@ export const reserveLaunch = internalMutation({
       status: "launching",
       prompt,
     });
-    await ctx.db.patch("incidents", incidentId, { sessionId, status: "repairing" });
+    await ctx.db.patch("incidents", incidentId, {
+      sessionId,
+      status: "repairing",
+    });
     await ctx.db.insert("events", {
       productId,
       incidentId,
@@ -271,7 +308,11 @@ export const completeLaunch = internalMutation({
         devinSessionId: session.devinSessionId,
       };
     }
-    await ctx.db.patch("sessions", sessionId, { devinSessionId, devinUrl, status });
+    await ctx.db.patch("sessions", sessionId, {
+      devinSessionId,
+      devinUrl,
+      status,
+    });
     await ctx.db.insert("events", {
       productId: session.productId,
       incidentId: session.incidentId,
@@ -296,7 +337,9 @@ export const recordLaunchError = internalMutation({
     if (session.incidentId) {
       const incident = await ctx.db.get("incidents", session.incidentId);
       if (incident?.status === "repairing") {
-        await ctx.db.patch("incidents", incident._id, { status: "repair_failed" });
+        await ctx.db.patch("incidents", incident._id, {
+          status: "repair_failed",
+        });
       }
     }
     await ctx.db.insert("events", {
@@ -311,9 +354,13 @@ export const recordLaunchError = internalMutation({
 });
 
 const parseLaunchResponse = (value: unknown) => {
-  if (!value || typeof value !== "object") throw new Error("Devin returned an invalid launch response");
+  if (!value || typeof value !== "object")
+    throw new Error("Devin returned an invalid launch response");
   const response = value as Record<string, unknown>;
-  if (typeof response.session_id !== "string" || typeof response.url !== "string") {
+  if (
+    typeof response.session_id !== "string" ||
+    typeof response.url !== "string"
+  ) {
     throw new Error("Devin launch response is missing session_id or url");
   }
   return { sessionId: response.session_id, url: response.url };
@@ -326,14 +373,21 @@ export const launchPlain = internalAction({
   args: launchArgs,
   returns: launchResult,
   handler: async (ctx, args: LaunchArgs): Promise<LaunchResult> => {
-    const packet: IncidentPacket = await ctx.runQuery(internal.devin.prepareLaunch, args);
+    const packet: IncidentPacket = await ctx.runQuery(
+      internal.devin.prepareLaunch,
+      args,
+    );
     const prompt: string = incidentPrompt(packet);
-    const reservation: Reservation = await ctx.runMutation(internal.devin.reserveLaunch, { ...args, prompt });
+    const reservation: Reservation = await ctx.runMutation(
+      internal.devin.reserveLaunch,
+      { ...args, prompt },
+    );
     if (reservation.status === "skipped") {
       return { status: "skipped" as const, reason: reservation.reason };
     }
     const reservedSessionId = reservation.sessionId;
-    if (!reservedSessionId) throw new Error("Launch reservation did not return a session ID");
+    if (!reservedSessionId)
+      throw new Error("Launch reservation did not return a session ID");
     if (reservation.status === "duplicate" && !reservation.retryReservation) {
       return {
         status: "duplicate" as const,
@@ -354,7 +408,10 @@ export const launchPlain = internalAction({
     try {
       const response = await fetch("https://api.devin.ai/v1/sessions", {
         method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           prompt,
           idempotent: true,
@@ -367,12 +424,16 @@ export const launchPlain = internalAction({
       const launched = parseLaunchResponse(await response.json());
 
       let initialStatus = "working";
-      const initial = await fetch(`https://api.devin.ai/v1/sessions/${encodeURIComponent(launched.sessionId)}`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
+      const initial = await fetch(
+        `https://api.devin.ai/v1/sessions/${encodeURIComponent(launched.sessionId)}`,
+        {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        },
+      );
       if (initial.ok) {
         const body = (await initial.json()) as Record<string, unknown>;
-        if (typeof body.status_enum === "string") initialStatus = body.status_enum;
+        if (typeof body.status_enum === "string")
+          initialStatus = body.status_enum;
       }
 
       return await ctx.runMutation(internal.devin.completeLaunch, {
@@ -382,7 +443,8 @@ export const launchPlain = internalAction({
         status: initialStatus,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown Devin launch error";
+      const message =
+        error instanceof Error ? error.message : "Unknown Devin launch error";
       await ctx.runMutation(internal.devin.recordLaunchError, {
         sessionId: reservedSessionId,
         message,
@@ -393,7 +455,13 @@ export const launchPlain = internalAction({
 });
 
 const activeStatuses = new Set(["working", "blocked", "resumed"]);
-const terminalFailureStatuses = new Set(["expired", "failed", "error", "stopped", "cancelled"]);
+const terminalFailureStatuses = new Set([
+  "expired",
+  "failed",
+  "error",
+  "stopped",
+  "cancelled",
+]);
 
 type StructuredOutput = {
   pr_url?: string;
@@ -420,7 +488,9 @@ const structuredOutputValidator = v.object({
   test_summary: v.optional(v.string()),
 });
 
-const sanitizeStructuredOutput = (value: unknown): StructuredOutput | undefined => {
+const sanitizeStructuredOutput = (
+  value: unknown,
+): StructuredOutput | undefined => {
   let candidate = value;
   if (typeof candidate === "string") {
     try {
@@ -429,19 +499,25 @@ const sanitizeStructuredOutput = (value: unknown): StructuredOutput | undefined 
       return undefined;
     }
   }
-  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return undefined;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+    return undefined;
   const record = candidate as Record<string, unknown>;
   const sanitized: StructuredOutput = {};
   if (typeof record.pr_url === "string") sanitized.pr_url = record.pr_url;
-  if (typeof record.summary === "string") sanitized.summary = record.summary.slice(0, 4000);
-  if (typeof record.root_cause === "string") sanitized.root_cause = record.root_cause.slice(0, 4000);
-  if (typeof record.tests_passed === "boolean") sanitized.tests_passed = record.tests_passed;
-  if (typeof record.test_summary === "string") sanitized.test_summary = record.test_summary.slice(0, 4000);
+  if (typeof record.summary === "string")
+    sanitized.summary = record.summary.slice(0, 4000);
+  if (typeof record.root_cause === "string")
+    sanitized.root_cause = record.root_cause.slice(0, 4000);
+  if (typeof record.tests_passed === "boolean")
+    sanitized.tests_passed = record.tests_passed;
+  if (typeof record.test_summary === "string")
+    sanitized.test_summary = record.test_summary.slice(0, 4000);
   return Object.keys(sanitized).length ? sanitized : undefined;
 };
 
 const parsePollPayload = (value: unknown): PollPayload => {
-  if (!value || typeof value !== "object") throw new Error("Devin returned an invalid session response");
+  if (!value || typeof value !== "object")
+    throw new Error("Devin returned an invalid session response");
   const response = value as Record<string, unknown>;
   if (typeof response.status_enum !== "string") {
     throw new Error("Devin session response is missing status_enum");
@@ -451,7 +527,8 @@ const parsePollPayload = (value: unknown): PollPayload => {
       ? (response.pull_request as Record<string, unknown>)
       : undefined;
   const structuredOutput = sanitizeStructuredOutput(response.structured_output);
-  const pullRequestUrl = typeof pullRequest?.url === "string" ? pullRequest.url : undefined;
+  const pullRequestUrl =
+    typeof pullRequest?.url === "string" ? pullRequest.url : undefined;
   const prUrl = pullRequestUrl ?? structuredOutput?.pr_url;
   const numberMatch = prUrl?.match(/\/pull\/(\d+)(?:\/|$)/);
   const testStatus =
@@ -489,7 +566,8 @@ export const listActiveSessions = internalQuery({
 });
 
 const sentinelMetadata = (value: unknown) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return undefined;
   const metadata = (value as Record<string, unknown>)._sentinel;
   return metadata && typeof metadata === "object" && !Array.isArray(metadata)
     ? (metadata as Record<string, unknown>)
@@ -501,9 +579,12 @@ export const claimBlockedNudge = internalMutation({
   returns: v.boolean(),
   handler: async (ctx, { sessionId }) => {
     const session = await ctx.db.get("sessions", sessionId);
-    if (!session || sentinelMetadata(session.structuredOutput)?.nudged === true) return false;
+    if (!session || sentinelMetadata(session.structuredOutput)?.nudged === true)
+      return false;
     const current =
-      session.structuredOutput && typeof session.structuredOutput === "object" && !Array.isArray(session.structuredOutput)
+      session.structuredOutput &&
+      typeof session.structuredOutput === "object" &&
+      !Array.isArray(session.structuredOutput)
         ? (session.structuredOutput as Record<string, unknown>)
         : {};
     await ctx.db.patch("sessions", sessionId, {
@@ -545,7 +626,9 @@ export const applyPoll = internalMutation({
     prUrl: v.optional(v.string()),
     prNumber: v.optional(v.number()),
     structuredOutput: v.optional(structuredOutputValidator),
-    testStatus: v.optional(v.union(v.literal("passed"), v.literal("failed"), v.literal("unknown"))),
+    testStatus: v.optional(
+      v.union(v.literal("passed"), v.literal("failed"), v.literal("unknown")),
+    ),
     testSummary: v.optional(v.string()),
   },
   returns: v.null(),
@@ -554,7 +637,10 @@ export const applyPoll = internalMutation({
     if (!session) return null;
     const existingMetadata = sentinelMetadata(session.structuredOutput);
     const output = payload.structuredOutput
-      ? { ...(payload.structuredOutput as Record<string, unknown>), ...(existingMetadata ? { _sentinel: existingMetadata } : {}) }
+      ? {
+          ...(payload.structuredOutput as Record<string, unknown>),
+          ...(existingMetadata ? { _sentinel: existingMetadata } : {}),
+        }
       : session.structuredOutput;
     const patch: Partial<Doc<"sessions">> = {
       status: payload.status,
@@ -600,33 +686,49 @@ export const applyPoll = internalMutation({
       Boolean(payload.prUrl) && payload.testStatus === "passed";
     if (session.incidentId) {
       const incident = await ctx.db.get("incidents", session.incidentId);
-      if (!incident || incident.status === "repair_proposed" || incident.status === "repair_failed") return null;
+      if (
+        !incident ||
+        incident.status === "repair_proposed" ||
+        incident.status === "repair_failed"
+      )
+        return null;
       if ((finished || payload.status === "blocked") && evidenceComplete) {
         await ctx.db.patch("incidents", incident._id, { status: "validating" });
         await ctx.db.insert("events", {
           productId: session.productId,
           incidentId: incident._id,
           sentinel: "integration",
-          message: "Repair completed with a PR; validating reported test results.",
+          message:
+            "Repair completed with a PR; validating reported test results.",
           level: "info",
         });
-        await ctx.db.patch("incidents", incident._id, { status: "repair_proposed" });
+        await ctx.db.patch("incidents", incident._id, {
+          status: "repair_proposed",
+        });
         await ctx.db.insert("events", {
           productId: session.productId,
           incidentId: incident._id,
           sentinel: "integration",
-          message: "Repair PR proposed with passing tests. Human review is required; Kevin (not Devin) will not merge it.",
+          message:
+            "Repair PR proposed with passing tests. Human review is required; Kevin (not Devin) will not merge it.",
           level: "info",
         });
-      } else if (finished || terminalFailure || payload.testStatus === "failed") {
-        const reason = payload.testStatus === "failed"
-          ? "tests failed"
-          : !payload.prUrl
-            ? "no required pull request was produced"
-            : payload.testStatus !== "passed"
-              ? "passing tests were not reported"
-              : `session ended with ${payload.status}`;
-        await ctx.db.patch("incidents", incident._id, { status: "repair_failed" });
+      } else if (
+        finished ||
+        terminalFailure ||
+        payload.testStatus === "failed"
+      ) {
+        const reason =
+          payload.testStatus === "failed"
+            ? "tests failed"
+            : !payload.prUrl
+              ? "no required pull request was produced"
+              : payload.testStatus !== "passed"
+                ? "passing tests were not reported"
+                : `session ended with ${payload.status}`;
+        await ctx.db.patch("incidents", incident._id, {
+          status: "repair_failed",
+        });
         await ctx.db.insert("events", {
           productId: session.productId,
           incidentId: incident._id,
@@ -642,9 +744,19 @@ export const applyPoll = internalMutation({
 
 export const poll = internalAction({
   args: { sessionId: v.optional(v.id("sessions")) },
-  returns: v.object({ active: v.number(), polled: v.number(), failed: v.number() }),
-  handler: async (ctx, { sessionId }): Promise<{ active: number; polled: number; failed: number }> => {
-    const sessions: Doc<"sessions">[] = await ctx.runQuery(internal.devin.listActiveSessions, { sessionId });
+  returns: v.object({
+    active: v.number(),
+    polled: v.number(),
+    failed: v.number(),
+  }),
+  handler: async (
+    ctx,
+    { sessionId },
+  ): Promise<{ active: number; polled: number; failed: number }> => {
+    const sessions: Doc<"sessions">[] = await ctx.runQuery(
+      internal.devin.listActiveSessions,
+      { sessionId },
+    );
     if (!sessions.length) return { active: 0, polled: 0, failed: 0 };
     const apiKey = process.env.DEVIN_API_KEY;
     if (!apiKey) throw new Error("DEVIN_API_KEY is not configured");
@@ -660,16 +772,24 @@ export const poll = internalAction({
         if (!response.ok) throw new Error(responseError(response));
         const payload = parsePollPayload(await response.json());
         if (payload.status === "blocked") {
-          const claimed: boolean = await ctx.runMutation(internal.devin.claimBlockedNudge, {
-            sessionId: session._id,
-          });
+          const claimed: boolean = await ctx.runMutation(
+            internal.devin.claimBlockedNudge,
+            {
+              sessionId: session._id,
+            },
+          );
           if (claimed) {
             const nudge = await fetch(
               `https://api.devin.ai/v1/session/${encodeURIComponent(session.devinSessionId)}/message`,
               {
                 method: "POST",
-                headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ message: "Proceed with your best judgment." }),
+                headers: {
+                  Authorization: `Bearer ${apiKey}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  message: "Proceed with your best judgment.",
+                }),
               },
             );
             await ctx.runMutation(internal.devin.recordNudgeResult, {
@@ -678,7 +798,10 @@ export const poll = internalAction({
             });
           }
         }
-        await ctx.runMutation(internal.devin.applyPoll, { sessionId: session._id, ...payload });
+        await ctx.runMutation(internal.devin.applyPoll, {
+          sessionId: session._id,
+          ...payload,
+        });
         polled += 1;
       } catch {
         failed += 1;
@@ -703,18 +826,26 @@ export const repairLifecycle = workflow
       polls: v.number(),
     }),
   })
-  .handler(async (step, { sessionId }): Promise<{ status: "completed" | "poll_limit_reached"; polls: number }> => {
-    for (let polls = 1; polls <= 180; polls += 1) {
-      const result = await step.runAction(
-        internal.devin.poll,
-        { sessionId },
-        { retry: true, name: `poll-${polls}` },
-      );
-      if (result.active === 0) return { status: "completed", polls };
-      await step.sleep(20_000, { name: `wait-${polls}` });
-    }
-    return { status: "poll_limit_reached", polls: 180 };
-  });
+  .handler(
+    async (
+      step,
+      { sessionId },
+    ): Promise<{
+      status: "completed" | "poll_limit_reached";
+      polls: number;
+    }> => {
+      for (let polls = 1; polls <= 180; polls += 1) {
+        const result = await step.runAction(
+          internal.devin.poll,
+          { sessionId },
+          { retry: true, name: `poll-${polls}` },
+        );
+        if (result.active === 0) return { status: "completed", polls };
+        await step.sleep(20_000, { name: `wait-${polls}` });
+      }
+      return { status: "poll_limit_reached", polls: 180 };
+    },
+  );
 
 export const handleLifecycleComplete = internalMutation({
   args: {
@@ -727,7 +858,9 @@ export const handleLifecycleComplete = internalMutation({
     const session = await ctx.db.get("sessions", context.sessionId);
     if (!session) return null;
     const current =
-      session.structuredOutput && typeof session.structuredOutput === "object" && !Array.isArray(session.structuredOutput)
+      session.structuredOutput &&
+      typeof session.structuredOutput === "object" &&
+      !Array.isArray(session.structuredOutput)
         ? (session.structuredOutput as Record<string, unknown>)
         : {};
     const metadata = sentinelMetadata(current);
@@ -738,9 +871,14 @@ export const handleLifecycleComplete = internalMutation({
         _sentinel: { ...metadata, workflowManaged: false },
       },
     });
-    const completion = result && typeof result === "object" ? (result as Record<string, unknown>) : undefined;
+    const completion =
+      result && typeof result === "object"
+        ? (result as Record<string, unknown>)
+        : undefined;
     const returnValue =
-      completion?.kind === "success" && completion.returnValue && typeof completion.returnValue === "object"
+      completion?.kind === "success" &&
+      completion.returnValue &&
+      typeof completion.returnValue === "object"
         ? (completion.returnValue as Record<string, unknown>)
         : undefined;
     if (
@@ -770,7 +908,9 @@ export const startLifecycle = internalMutation({
     const session = await ctx.db.get("sessions", sessionId);
     if (!session || !activeStatuses.has(session.status)) return false;
     const current =
-      session.structuredOutput && typeof session.structuredOutput === "object" && !Array.isArray(session.structuredOutput)
+      session.structuredOutput &&
+      typeof session.structuredOutput === "object" &&
+      !Array.isArray(session.structuredOutput)
         ? (session.structuredOutput as Record<string, unknown>)
         : {};
     const metadata = sentinelMetadata(current);
@@ -779,7 +919,10 @@ export const startLifecycle = internalMutation({
       ctx,
       internal.devin.repairLifecycle,
       { sessionId },
-      { onComplete: internal.devin.handleLifecycleComplete, context: { sessionId } },
+      {
+        onComplete: internal.devin.handleLifecycleComplete,
+        context: { sessionId },
+      },
     );
     await ctx.db.patch("sessions", sessionId, {
       structuredOutput: {
@@ -795,9 +938,14 @@ export const launch = internalAction({
   args: launchArgs,
   returns: launchResult,
   handler: async (ctx, args: LaunchArgs): Promise<LaunchResult> => {
-    const result: LaunchResult = await ctx.runAction(internal.devin.launchPlain, args);
+    const result: LaunchResult = await ctx.runAction(
+      internal.devin.launchPlain,
+      args,
+    );
     if (result.sessionId) {
-      await ctx.runMutation(internal.devin.startLifecycle, { sessionId: result.sessionId });
+      await ctx.runMutation(internal.devin.startLifecycle, {
+        sessionId: result.sessionId,
+      });
     }
     return result;
   },

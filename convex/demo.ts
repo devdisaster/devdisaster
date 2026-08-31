@@ -56,7 +56,8 @@ export const runIntegration = action({
       };
     }
 
-    const error = isRecord(payload) && isRecord(payload.error) ? payload.error : undefined;
+    const error =
+      isRecord(payload) && isRecord(payload.error) ? payload.error : undefined;
     if (response.status !== 400 || error?.code !== "unsupported_parameter") {
       return {
         ok: false,

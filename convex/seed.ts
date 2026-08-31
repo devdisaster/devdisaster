@@ -70,7 +70,9 @@ export const registerMonitor = mutation({
       (candidate) => candidate.provider === "openai" && candidate.enabled,
     );
     if (!integration) {
-      throw new Error("No enabled OpenAI integration to register the monitor on.");
+      throw new Error(
+        "No enabled OpenAI integration to register the monitor on.",
+      );
     }
     await ctx.db.patch("integrations", integration._id, { monitorId });
     return null;

@@ -301,7 +301,9 @@ const hmacHex = async (secret: string, payload: string) => {
 const parseSignatureHeader = (header: string | null) => {
   if (!header) return null;
   const parts = Object.fromEntries(
-    header.split(",").map((part) => part.trim().split("=", 2) as [string, string]),
+    header
+      .split(",")
+      .map((part) => part.trim().split("=", 2) as [string, string]),
   );
   if (!parts.t || !parts.v1) return null;
   return { timestamp: parts.t, signature: parts.v1 };
@@ -340,7 +342,9 @@ export const handleContextWebhook = httpAction(async (ctx, request) => {
     );
   }
   const rawBody = await request.text();
-  const parsed = parseSignatureHeader(request.headers.get("X-Context-Signature"));
+  const parsed = parseSignatureHeader(
+    request.headers.get("X-Context-Signature"),
+  );
   if (!parsed) return jsonResponse({ error: "Missing signature" }, 401);
   const ageSeconds = Math.abs(Date.now() / 1000 - Number(parsed.timestamp));
   if (!Number.isFinite(ageSeconds) || ageSeconds > WEBHOOK_MAX_AGE_SECONDS) {
@@ -373,7 +377,8 @@ export const handleContextWebhook = httpAction(async (ctx, request) => {
   const summary =
     findString(payload, ["summary", "change_summary", "description", "diff"]) ??
     "Context.dev detected a change on the monitored docs page.";
-  const url = findString(payload, ["url", "target_url", "page_url"]) ??
+  const url =
+    findString(payload, ["url", "target_url", "page_url"]) ??
     integration.docsUrl;
 
   const result = await ctx.runMutation(internal.incidents.recordDocsTrigger, {
