@@ -1,10 +1,8 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { action, internalAction, mutation } from "./_generated/server";
-import { retrieveDocs } from "./docs";
+import { action, mutation } from "./_generated/server";
 
-const NEW_VERSION = "2024-09-12";
 const OLD_VERSION = "2024-08-06" as const;
 
 const EXTRACTION_SYSTEM_PROMPT =
@@ -17,80 +15,6 @@ const gatewayBase = (docsUrl: string) =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-
-const monitorScanResult = v.object({
-  changed: v.boolean(),
-  incidentId: v.optional(v.id("incidents")),
-  message: v.string(),
-});
-
-export const monitorScan = internalAction({
-  args: {},
-  returns: monitorScanResult,
-  handler: async (ctx) => {
-    const integration: Doc<"integrations"> = await ctx.runQuery(
-      internal.vendor.getIntegration,
-      {},
-    );
-    const response = await fetch(integration.docsUrl, {
-      headers: { Accept: "text/html" },
-    });
-    if (!response.ok) {
-      return {
-        changed: false,
-        message: `The docs mirror could not be retrieved (${response.status}).`,
-      };
-    }
-    const html = await response.text();
-    const versionMatch = html.match(/data-version="([^"]+)"/);
-    const observedVersion = versionMatch?.[1] ?? integration.activeContractVersion;
-    if (observedVersion !== NEW_VERSION) {
-      return {
-        changed: false,
-        message: `Monitor run found no breaking change; the docs still describe ${observedVersion}.`,
-      };
-    }
-    const scraped = await retrieveDocs(integration.docsUrl);
-    const summary =
-      "The 2024-09-12 changelog deprecates the max_tokens parameter on /v1/chat/completions — requests must send max_completion_tokens instead.";
-    const result: { incidentId: Doc<"incidents">["_id"]; created: boolean } =
-      await ctx.runMutation(internal.incidents.recordDocsTrigger, {
-        integrationId: integration._id,
-        url: integration.docsUrl,
-        summary,
-        isBreaking: true,
-        affectedEndpoints: [integration.endpoint],
-        observedVersion,
-        raw: {
-          source: "monitor-run",
-          observedVersion,
-          docsUrl: integration.docsUrl,
-          retrievedVia: scraped?.via ?? "unavailable",
-          docsExcerpt: scraped?.text.slice(0, 1500),
-        },
-      });
-    return {
-      changed: true,
-      incidentId: result.incidentId,
-      message: result.created
-        ? "Breaking docs change detected; a new incident is being diagnosed."
-        : "Breaking docs change detected; evidence attached to the existing incident.",
-    };
-  },
-});
-
-type MonitorScanResult = {
-  changed: boolean;
-  incidentId?: Doc<"incidents">["_id"];
-  message: string;
-};
-
-export const runMonitorNow = action({
-  args: {},
-  returns: monitorScanResult,
-  handler: async (ctx): Promise<MonitorScanResult> =>
-    ctx.runAction(internal.demo.monitorScan, {}),
-});
 
 export const runIntegration = action({
   args: {},

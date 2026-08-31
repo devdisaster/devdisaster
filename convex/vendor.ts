@@ -76,16 +76,6 @@ const setVersion = (version: ContractVersion) =>
             : `OpenAI Chat Completions contract reset to ${OLD_VERSION}.`,
         level: "info",
       });
-      if (version === NEW_VERSION) {
-        await ctx.db.insert("events", {
-          productId: integration.productId,
-          sentinel: "integration",
-          message:
-            "Context monitor scan scheduled for the changed OpenAI docs page.",
-          level: "info",
-        });
-        await ctx.scheduler.runAfter(4000, internal.demo.monitorScan, {});
-      }
       return { changed: true, activeContractVersion: version };
     },
   });

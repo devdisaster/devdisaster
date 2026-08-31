@@ -540,7 +540,11 @@ function IntegrationHealthCard({
             </div>
             <div>
               <dt className="text-muted-foreground">Monitor</dt>
-              <dd className="text-foreground">watching docs mirror</dd>
+              <dd className="text-foreground">
+                {integration.monitorId
+                  ? "Context.dev monitor active"
+                  : "not registered"}
+              </dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Test command</dt>
