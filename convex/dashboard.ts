@@ -39,9 +39,7 @@ export const overview = query({
     );
     return {
       product,
-      integrations: integrations.map(
-        ({ cachedResponse: _cachedResponse, ...integration }) => integration,
-      ),
+      integrations,
       incidents: byNewest(incidents).map((incident) => ({
         ...incident,
         session: incident.sessionId

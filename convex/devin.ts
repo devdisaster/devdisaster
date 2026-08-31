@@ -168,7 +168,7 @@ ${diagnosis}
 1. Inspect ${packet.integration.integrationPath} and confirm the diagnosis.
 2. Make the smallest integration-only change so the code works with the new contract.
    Do not refactor unrelated code. Do not touch the vendor or its docs.
-3. Update or add a regression test covering the NEW contract shape (fixture provided in evidence).
+3. Update or add a regression test covering the NEW contract shape (add or update the fixture under src/lib/__fixtures__).
 4. Run: ${packet.integration.testCommand}
 5. Open a PR titled "fix: ${packet.incident.title}" citing this incident's evidence in the body.
 6. Report pr_url, summary, root_cause, tests_passed, test_summary in your structured output.

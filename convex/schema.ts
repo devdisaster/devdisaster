@@ -7,19 +7,17 @@ export default defineSchema({
     name: v.string(),
     description: v.string(),           // fed into Devin prompts
     repo: v.optional(v.string()),      // "org/invoicepilot" — ABSENT = observer mode (no Devin)
-    docsUrls: v.array(v.string()),
   }),
 
   integrations: defineTable({          // one InvoicePilot integration for the hackathon
     productId: v.id("products"),
-    name: v.string(),                  // "Stripe Payments"
-    provider: v.string(),              // "stripe"
+    name: v.string(),                  // "OpenAI Chat Completions"
+    provider: v.string(),              // "openai"
     docsUrl: v.string(),               // the controlled docs mirror URL
-    endpoint: v.string(),              // "/v1/payment_intents"
-    integrationPath: v.string(),       // "src/lib/stripe.ts"
+    endpoint: v.string(),              // "/v1/chat/completions"
+    integrationPath: v.string(),       // "src/lib/openai.ts"
     expectedContract: v.string(),      // concise customer-expected response contract
-    activeContractVersion: v.union(v.literal("2022-08-01"), v.literal("2022-11-15")),
-    cachedResponse: v.optional(v.any()), // last-good upstream response (wifi fallback)
+    activeContractVersion: v.union(v.literal("2024-08-06"), v.literal("2024-09-12")),
     testCommand: v.string(),           // "npm test"
     monitorId: v.optional(v.string()),
     enabled: v.boolean(),

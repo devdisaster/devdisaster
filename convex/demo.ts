@@ -4,11 +4,19 @@ import type { Doc } from "./_generated/dataModel";
 import { action, internalAction, mutation } from "./_generated/server";
 import { retrieveDocs } from "./docs";
 
-const NEW_VERSION = "2022-11-15";
-const OLD_VERSION = "2022-08-01" as const;
+const NEW_VERSION = "2024-09-12";
+const OLD_VERSION = "2024-08-06" as const;
+
+const EXTRACTION_SYSTEM_PROMPT =
+  "You extract invoice fields from a pasted billing email. Reply with strict JSON only.";
+const EXTRACTION_EMAIL =
+  "Hi — invoice for Northstar Labs, $2,480.00 USD, due 2026-09-30. Thanks!";
 
 const gatewayBase = (docsUrl: string) =>
-  docsUrl.replace(/\/demo\/stripe\/docs$/, "");
+  docsUrl.replace(/\/demo\/openai\/docs$/, "");
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const monitorScanResult = v.object({
   changed: v.boolean(),
@@ -44,7 +52,7 @@ export const monitorScan = internalAction({
     }
     const scraped = await retrieveDocs(integration.docsUrl);
     const summary =
-      "The 2022-11-15 changelog removes the `charges` attribute from the PaymentIntent object — integrations must use `latest_charge` instead.";
+      "The 2024-09-12 changelog deprecates the max_tokens parameter on /v1/chat/completions — requests must send max_completion_tokens instead.";
     const result: { incidentId: Doc<"incidents">["_id"]; created: boolean } =
       await ctx.runMutation(internal.incidents.recordDocsTrigger, {
         integrationId: integration._id,
@@ -97,44 +105,45 @@ export const runIntegration = action({
       {},
     );
     const base = gatewayBase(integration.docsUrl);
-    const params = new URLSearchParams({
-      amount: "1299",
-      currency: "usd",
-      confirm: "true",
-      payment_method: "pm_card_visa",
-    });
-    params.append("payment_method_types[]", "card");
-    const response = await fetch(`${base}/demo/stripe/v1/payment_intents`, {
+    // Mirrors the request src/lib/openai.ts sends on every extraction.
+    const response = await fetch(`${base}/demo/openai/v1/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
+          { role: "user", content: EXTRACTION_EMAIL },
+        ],
+        max_tokens: 256,
+        temperature: 0,
+      }),
     });
     const contractVersion =
-      response.headers.get("Stripe-Version") ??
+      response.headers.get("X-Contract-Version") ??
       integration.activeContractVersion;
-    if (!response.ok) {
-      return {
-        ok: false,
-        contractVersion,
-        message: `The payment gateway request failed (${response.status}).`,
-      };
-    }
-    const paymentIntent = (await response.json()) as Record<string, unknown>;
-    const charges = paymentIntent.charges as
-      | { data?: Record<string, unknown>[] }
-      | undefined;
-    const charge = charges?.data?.[0];
-    if (charge && typeof charge.receipt_url === "string") {
+    const payload: unknown = await response.json().catch(() => null);
+
+    if (response.ok) {
       return {
         ok: true,
         contractVersion,
-        message: `Payment collected under ${contractVersion}; receipt and paid status read from charges.data[0].`,
+        message: `Invoice fields extracted under ${contractVersion}; the adapter read the draft from choices[0].message.content.`,
+      };
+    }
+
+    const error = isRecord(payload) && isRecord(payload.error) ? payload.error : undefined;
+    if (response.status !== 400 || error?.code !== "unsupported_parameter") {
+      return {
+        ok: false,
+        contractVersion,
+        message: `The chat completion request failed (${response.status}).`,
       };
     }
 
     const token = process.env.SENTINEL_INGEST_TOKEN;
     const message =
-      "Stripe contract failure: PaymentIntent response is missing charges.data[0]; the adapter cannot read receipt_url or paid status.";
+      "OpenAI contract failure: 'max_tokens' rejected as unsupported_parameter on /v1/chat/completions; the adapter cannot complete invoice extraction.";
     if (token) {
       await fetch(`${base}/ingest/errors`, {
         method: "POST",
@@ -153,7 +162,11 @@ export const runIntegration = action({
     return {
       ok: false,
       contractVersion,
-      message: `The integration failed under ${contractVersion}: charges is missing from the PaymentIntent. The runtime failure was reported to Kevin (not Devin).`,
+      message: `The integration failed under ${contractVersion}: max_tokens is rejected as an unsupported parameter. ${
+        token
+          ? "The runtime failure was reported to Kevin (not Devin)."
+          : "SENTINEL_INGEST_TOKEN is not configured, so the runtime failure was not reported."
+      }`,
     };
   },
 });

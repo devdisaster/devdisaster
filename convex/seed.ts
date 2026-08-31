@@ -4,9 +4,8 @@ import { env, mutation } from "./_generated/server";
 const product = {
   name: "InvoicePilot",
   description:
-    "A billing SaaS for creating invoices, collecting Stripe payments, and exporting invoice data.",
+    "A billing SaaS for creating invoices, collecting payments, and drafting invoices from pasted emails using OpenAI chat completions.",
   repo: "devdisaster/invoicepilot",
-  docsUrls: [`${env.CONVEX_SITE_URL}/demo/stripe/docs`],
 };
 
 export const setupProducts = mutation({
@@ -29,14 +28,14 @@ export const setupProducts = mutation({
 
     const integration = {
       productId,
-      name: "Stripe Payments",
-      provider: "stripe",
-      docsUrl: `${env.CONVEX_SITE_URL}/demo/stripe/docs`,
-      endpoint: "/v1/payment_intents",
-      integrationPath: "src/lib/stripe.ts",
+      name: "OpenAI Chat Completions",
+      provider: "openai",
+      docsUrl: `${env.CONVEX_SITE_URL}/demo/openai/docs`,
+      endpoint: "/v1/chat/completions",
+      integrationPath: "src/lib/openai.ts",
       expectedContract:
-        "PaymentIntent includes charges.data[0] with receipt_url and status.",
-      activeContractVersion: "2022-08-01" as const,
+        "Chat Completions accepts the max_tokens parameter to cap completion length; the adapter sends max_tokens on every extraction request.",
+      activeContractVersion: "2024-08-06" as const,
       testCommand: "npm test",
       enabled: true,
     };

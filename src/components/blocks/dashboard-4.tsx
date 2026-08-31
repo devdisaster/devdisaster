@@ -47,7 +47,7 @@ import { cn } from "@/lib/utils";
 type IncidentWithSession = Doc<"incidents"> & {
   session: Doc<"sessions"> | null;
 };
-type Integration = Omit<Doc<"integrations">, "cachedResponse">;
+type Integration = Doc<"integrations">;
 type Overview = {
   product: Doc<"products">;
   integrations: Integration[];
@@ -278,7 +278,7 @@ function IncidentList({
         hint={
           query
             ? "Try a different title, status, or verdict."
-            : "Ship the vendor upgrade from the Stripe docs page to start the demo."
+            : "Flip the vendor docs to the new contract version to start a demo run."
         }
       />
     );
@@ -690,7 +690,7 @@ function DashboardView({
         {integration ? (
           <Button variant="outline" size="sm" asChild>
             <a href={integration.docsUrl} target="_blank" rel="noreferrer">
-              Open Stripe docs
+              Open vendor docs
               <ExternalLink aria-hidden className="h-3.5 w-3.5" />
             </a>
           </Button>
@@ -859,7 +859,7 @@ function SettingsView({
           {integration ? (
             <Button variant="outline" size="sm" asChild>
               <a href={integration.docsUrl} target="_blank" rel="noreferrer">
-                Open Stripe docs
+                Open vendor docs
                 <ExternalLink aria-hidden className="h-3.5 w-3.5" />
               </a>
             </Button>
