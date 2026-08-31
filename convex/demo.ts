@@ -1,9 +1,11 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { action, mutation } from "./_generated/server";
+import { action, internalAction, mutation } from "./_generated/server";
+import { retrieveDocs } from "./docs";
 
 const OLD_VERSION = "2024-08-06" as const;
+const NEW_VERSION = "2024-09-12" as const;
 
 const EXTRACTION_SYSTEM_PROMPT =
   "You extract invoice fields from a pasted billing email. Reply with strict JSON only.";
@@ -15,6 +17,80 @@ const gatewayBase = (docsUrl: string) =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const monitorScanResult = v.object({
+  changed: v.boolean(),
+  incidentId: v.optional(v.id("incidents")),
+  message: v.string(),
+});
+
+// Stand-in for a Context.dev monitor (the demo account is at its monitor
+// cap). Detection is content-based on the scraped page text; a real monitor
+// delivers to /webhooks/context instead — see seed.registerMonitor.
+export const monitorScan = internalAction({
+  args: {},
+  returns: monitorScanResult,
+  handler: async (ctx) => {
+    const integration: Doc<"integrations"> = await ctx.runQuery(
+      internal.vendor.getIntegration,
+      {},
+    );
+    const scraped = await retrieveDocs(integration.docsUrl);
+    if (!scraped) {
+      return {
+        changed: false,
+        message: "The docs page could not be retrieved.",
+      };
+    }
+    if (!scraped.text.includes("max_completion_tokens")) {
+      return {
+        changed: false,
+        message: "Docs scan found no contract change on the watched page.",
+      };
+    }
+    const changelogSentence = scraped.text.match(
+      /[^.]*max_tokens is deprecated[^.]*\./i,
+    )?.[0];
+    const summary = changelogSentence
+      ? `Docs changed: ${changelogSentence.trim()}`
+      : "The docs now deprecate the max_tokens parameter on /v1/chat/completions — requests must send max_completion_tokens instead.";
+    const result: { incidentId: Doc<"incidents">["_id"]; created: boolean } =
+      await ctx.runMutation(internal.incidents.recordDocsTrigger, {
+        integrationId: integration._id,
+        url: integration.docsUrl,
+        summary,
+        isBreaking: true,
+        affectedEndpoints: [integration.endpoint],
+        observedVersion: NEW_VERSION,
+        raw: {
+          source: "docs-scan",
+          retrievedVia: scraped.via,
+          docsUrl: integration.docsUrl,
+          docsExcerpt: scraped.text.slice(0, 1500),
+        },
+      });
+    return {
+      changed: true,
+      incidentId: result.incidentId,
+      message: result.created
+        ? "Breaking docs change detected; a new incident is being diagnosed."
+        : "Breaking docs change detected; evidence attached to the existing incident.",
+    };
+  },
+});
+
+type MonitorScanResult = {
+  changed: boolean;
+  incidentId?: Doc<"incidents">["_id"];
+  message: string;
+};
+
+export const runMonitorNow = action({
+  args: {},
+  returns: monitorScanResult,
+  handler: async (ctx): Promise<MonitorScanResult> =>
+    ctx.runAction(internal.demo.monitorScan, {}),
+});
 
 export const runIntegration = action({
   args: {},

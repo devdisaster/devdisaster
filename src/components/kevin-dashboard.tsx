@@ -549,7 +549,7 @@ function IntegrationHealthCard({
               <dd className="text-foreground">
                 {integration.monitorId
                   ? "Context.dev monitor active"
-                  : "not registered"}
+                  : "docs scan (demo mode)"}
               </dd>
             </div>
             <div>
