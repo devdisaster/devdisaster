@@ -4,8 +4,8 @@ import type { Doc } from "./_generated/dataModel";
 import { action, internalAction, mutation } from "./_generated/server";
 import { retrieveDocs } from "./docs";
 
-const OLD_VERSION = "2024-08-06" as const;
-const NEW_VERSION = "2024-09-12" as const;
+const OLD_VERSION = "2026-06-12" as const;
+const NEW_VERSION = "2026-08-28" as const;
 
 const EXTRACTION_SYSTEM_PROMPT =
   "You extract invoice fields from a pasted billing email. Reply with strict JSON only.";

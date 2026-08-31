@@ -35,7 +35,7 @@ export const setupProducts = mutation({
       integrationPath: "src/lib/openai.ts",
       expectedContract:
         "Chat Completions accepts the max_tokens parameter to cap completion length; the adapter sends max_tokens on every extraction request.",
-      activeContractVersion: "2024-08-06" as const,
+      activeContractVersion: "2026-06-12" as const,
       testCommand: "npm test",
       enabled: true,
     };

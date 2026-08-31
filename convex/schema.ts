@@ -19,8 +19,8 @@ export default defineSchema({
     integrationPath: v.string(), // "src/lib/openai.ts"
     expectedContract: v.string(), // concise customer-expected response contract
     activeContractVersion: v.union(
-      v.literal("2024-08-06"),
-      v.literal("2024-09-12"),
+      v.literal("2026-06-12"),
+      v.literal("2026-08-28"),
     ),
     testCommand: v.string(), // "npm test"
     monitorId: v.optional(v.string()),

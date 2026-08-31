@@ -4,8 +4,8 @@ import type { Doc } from "./_generated/dataModel";
 import { httpAction, internalQuery, mutation } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 
-const OLD_VERSION = "2024-08-06" as const;
-const NEW_VERSION = "2024-09-12" as const;
+const OLD_VERSION = "2026-06-12" as const;
+const NEW_VERSION = "2026-08-28" as const;
 const MAX_REQUEST_BYTES = 64 * 1024;
 
 // The simulated extraction result the customer adapter parses out of
@@ -240,8 +240,8 @@ const docsPage = (version: ContractVersion) => {
     ? ""
     : `<section class="changelog" id="changelog">
         <div class="eyebrow">Changelog</div>
-        <h2>2024-09-12 — max_tokens is deprecated</h2>
-        <p>2024-09-12 — max_tokens is deprecated and not supported for o-series reasoning models; use max_completion_tokens instead.</p>
+        <h2>2026-08-28 — max_tokens is deprecated</h2>
+        <p>2026-08-28 — max_tokens is deprecated and not supported for o-series reasoning models; use max_completion_tokens instead.</p>
         <p>Every chat completion request that caps output length must rename the max_tokens field to max_completion_tokens. Requests that keep sending max_tokens fail with HTTP 400 and the error code unsupported_parameter.</p>
       </section>`;
   const requestParameter = isOld
@@ -249,8 +249,8 @@ const docsPage = (version: ContractVersion) => {
     : `<span class="key">"max_completion_tokens"</span>: <span class="number">256</span>`;
   const targetVersion = isOld ? NEW_VERSION : OLD_VERSION;
   const controlLabel = isOld
-    ? "Ship the 2024-09-12 change"
-    : "Revert to 2024-08-06";
+    ? "Ship the 2026-08-28 change"
+    : "Revert to 2026-06-12";
   const controlDetail = isOld
     ? "Deprecates max_tokens and introduces max_completion_tokens"
     : "Restores max_tokens for the next demo run";

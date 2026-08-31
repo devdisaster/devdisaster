@@ -31,9 +31,13 @@ billing SaaS that drafts invoices from pasted emails using OpenAI chat completio
 Its adapter (`src/lib/openai.ts`) sends `max_tokens: 256` on every request — the
 planted bug Kevin finds and Devin fixes.
 
+The demo's contract versions (`2026-06-12` → `2026-08-28`) are dated to the present
+so the dashboard reads naturally; the replayed change itself is OpenAI's real
+September-2024 deprecation.
+
 ## How a repair happens
 
-1. **Detect** — the watched docs page ships the 2024-09-12 contract: `max_tokens`
+1. **Detect** — the watched docs page ships the 2026-08-28 contract: `max_tokens`
    becomes deprecated, `max_completion_tokens` replaces it. A docs scan picks up the
    change and opens an incident.
 2. **Gather** — Kevin retrieves the latest docs through the Context.dev scrape API and
@@ -101,7 +105,7 @@ SITE=https://<your-deployment>.convex.site
 
 # Ship the breaking change (or click the button on the docs mirror page)
 curl -X POST $SITE/demo/openai/docs -H 'Content-Type: application/json' \
-  -d '{"version":"2024-09-12"}'
+  -d '{"version":"2026-08-28"}'
 
 # Watch the dashboard: detected → diagnosing → impacted → Devin → PR
 
