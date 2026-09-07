@@ -20,13 +20,5 @@
     "hooks": "@/hooks"
   },
   "menuColor": "default",
-  "menuAccent": "subtle",
-  "registries": {
-    "@reactbits-pro": {
-      "url": "https://pro.reactbits.dev/api/r/pro/{name}.json",
-      "headers": {
-        "Authorization": "Bearer ${REACTBITS_LICENSE_KEY}"
-      }
-    }
-  }
+  "menuAccent": "subtle"
 }

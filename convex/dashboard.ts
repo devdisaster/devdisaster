@@ -14,48 +14,35 @@ export const overview = query({
       products.find((candidate) => Boolean(candidate.repo)) ?? products[0];
     if (!product) return null;
 
-    const [integrations, incidents, clusters, sessions, events] =
-      await Promise.all([
-        ctx.db
-          .query("integrations")
-          .withIndex("by_product", (q) => q.eq("productId", product._id))
-          .collect(),
-        ctx.db
-          .query("incidents")
-          .withIndex("by_product", (q) => q.eq("productId", product._id))
-          .collect(),
-        ctx.db
-          .query("clusters")
-          .withIndex("by_product", (q) => q.eq("productId", product._id))
-          .collect(),
-        ctx.db
-          .query("sessions")
-          .withIndex("by_product", (q) => q.eq("productId", product._id))
-          .collect(),
-        ctx.db
-          .query("events")
-          .withIndex("by_product", (q) => q.eq("productId", product._id))
-          .collect(),
-      ]);
+    const [integrations, incidents, sessions, events] = await Promise.all([
+      ctx.db
+        .query("integrations")
+        .withIndex("by_product", (q) => q.eq("productId", product._id))
+        .collect(),
+      ctx.db
+        .query("incidents")
+        .withIndex("by_product", (q) => q.eq("productId", product._id))
+        .collect(),
+      ctx.db
+        .query("sessions")
+        .withIndex("by_product", (q) => q.eq("productId", product._id))
+        .collect(),
+      ctx.db
+        .query("events")
+        .withIndex("by_product", (q) => q.eq("productId", product._id))
+        .collect(),
+    ]);
 
     const sessionById = new Map(
       sessions.map((session) => [session._id, session]),
     );
     return {
       product,
-      integrations: integrations.map(
-        ({ cachedResponse: _cachedResponse, ...integration }) => integration,
-      ),
+      integrations,
       incidents: byNewest(incidents).map((incident) => ({
         ...incident,
         session: incident.sessionId
           ? (sessionById.get(incident.sessionId) ?? null)
-          : null,
-      })),
-      clusters: byNewest(clusters).map((cluster) => ({
-        ...cluster,
-        session: cluster.sessionId
-          ? (sessionById.get(cluster.sessionId) ?? null)
           : null,
       })),
       sessions: byNewest(sessions),

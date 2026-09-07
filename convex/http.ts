@@ -1,6 +1,6 @@
 import { httpRouter } from "convex/server";
 import { handleContextWebhook, handleErrorIngest } from "./incidents";
-import { handleDocs, handleDocsControl, handlePaymentIntents } from "./vendor";
+import { handleChatCompletions, handleDocs, handleDocsControl } from "./vendor";
 
 const http = httpRouter();
 
@@ -17,25 +17,19 @@ http.route({
 });
 
 http.route({
-  path: "/demo/stripe/v1/payment_intents",
+  path: "/demo/openai/v1/chat/completions",
   method: "POST",
-  handler: handlePaymentIntents,
+  handler: handleChatCompletions,
 });
 
 http.route({
-  pathPrefix: "/demo/stripe/v1/payment_intents/",
-  method: "GET",
-  handler: handlePaymentIntents,
-});
-
-http.route({
-  path: "/demo/stripe/docs",
+  path: "/demo/openai/docs",
   method: "GET",
   handler: handleDocs,
 });
 
 http.route({
-  path: "/demo/stripe/docs",
+  path: "/demo/openai/docs",
   method: "POST",
   handler: handleDocsControl,
 });

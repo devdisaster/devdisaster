@@ -21,7 +21,10 @@ export const loadIncidentContext = internalQuery({
   handler: async (ctx, { incidentId }): Promise<IncidentContext> => {
     const incident = await ctx.db.get("incidents", incidentId);
     if (!incident) throw new Error("Incident not found");
-    const integration = await ctx.db.get("integrations", incident.integrationId);
+    const integration = await ctx.db.get(
+      "integrations",
+      incident.integrationId,
+    );
     if (!integration) throw new Error("Incident integration not found");
     const product = await ctx.db.get("products", incident.productId);
     if (!product) throw new Error("Incident product not found");
@@ -39,7 +42,14 @@ export const loadIncidentContext = internalQuery({
         .withIndex("by_incident", (q) => q.eq("incidentId", incidentId))
         .collect(),
     ]);
-    return { incident, integration, product, triggerEvents, docChanges, errors };
+    return {
+      incident,
+      integration,
+      product,
+      triggerEvents,
+      docChanges,
+      errors,
+    };
   },
 });
 
@@ -74,7 +84,11 @@ export const retrieveDocs = async (
           success?: boolean;
           markdown?: string;
         };
-        if (payload.success && typeof payload.markdown === "string" && payload.markdown.trim()) {
+        if (
+          payload.success &&
+          typeof payload.markdown === "string" &&
+          payload.markdown.trim()
+        ) {
           return {
             text: payload.markdown.slice(0, MAX_EXCERPT_CHARS),
             via: "context.dev",
@@ -217,24 +231,41 @@ Respond with ONLY a JSON object:
 {"verdict": "impacted"|"not_impacted"|"uncertain", "confidence": 0.0-1.0, "summary": "one-sentence reason", "affectedEndpoints": ["..."], "contractChange": "the changed contract element", "codeEvidence": ["exact code line(s) that use the changed element"], "evidence": ["docs statements proving the change"]}`;
 };
 
+const CLAUDE_RETRY_DELAYS_MS = [2000, 5000];
+
 const callClaude = async (prompt: string): Promise<string> => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured");
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`Claude request failed (${response.status})`);
+  let response: Response | undefined;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: CLAUDE_MODEL,
+          max_tokens: 1024,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+    } catch (error) {
+      if (attempt >= CLAUDE_RETRY_DELAYS_MS.length) throw error;
+      response = undefined;
+    }
+    if (response?.ok) break;
+    const status = response?.status;
+    const transient =
+      response === undefined || status === 429 || (status ?? 0) >= 500;
+    if (!transient || attempt >= CLAUDE_RETRY_DELAYS_MS.length) {
+      throw new Error(`Claude request failed (${status})`);
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, CLAUDE_RETRY_DELAYS_MS[attempt]),
+    );
   }
   const payload = (await response.json()) as {
     content?: { type: string; text?: string }[];
@@ -355,7 +386,9 @@ export const gatherAndDiagnose = internalAction({
         ...diagnosis.evidence,
         ...(codeMatches
           ? []
-          : ["Note: cited code lines were normalized against the retrieved file."]),
+          : [
+              "Note: cited code lines were normalized against the retrieved file.",
+            ]),
       ];
       await apply(
         "impacted",

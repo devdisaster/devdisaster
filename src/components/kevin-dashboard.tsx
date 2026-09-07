@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
@@ -14,8 +12,8 @@ import {
   ShieldAlert,
   Sun,
 } from "lucide-react";
-import { api } from "../../../convex/_generated/api";
-import type { Doc, Id } from "../../../convex/_generated/dataModel";
+import { api } from "../../convex/_generated/api";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,7 +45,7 @@ import { cn } from "@/lib/utils";
 type IncidentWithSession = Doc<"incidents"> & {
   session: Doc<"sessions"> | null;
 };
-type Integration = Omit<Doc<"integrations">, "cachedResponse">;
+type Integration = Doc<"integrations">;
 type Overview = {
   product: Doc<"products">;
   integrations: Integration[];
@@ -89,6 +87,11 @@ const LEVEL_DOT: Record<string, string> = {
   warn: "bg-amber-500",
   critical: "bg-red-500",
 };
+
+// An incident stops counting against integration health once it is diagnosed as
+// harmless or a repair PR is waiting for a human.
+const isActiveIncident = (incident: Doc<"incidents">) =>
+  !["not_impacted", "repair_proposed"].includes(incident.status);
 
 const timeAgo = (timestamp: number) => {
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
@@ -148,11 +151,14 @@ function EmptyState({ title, hint }: { title: string; hint?: string }) {
 }
 
 function IncidentTimeline({ incidentId }: { incidentId: Id<"incidents"> }) {
-  const timeline = useQuery(api.dashboard.incidentTimeline, { incidentId }) as {
-    incident: Doc<"incidents">;
-    events: Doc<"events">[];
-    session: Doc<"sessions"> | null;
-  } | null | undefined;
+  const timeline = useQuery(api.dashboard.incidentTimeline, { incidentId }) as
+    | {
+        incident: Doc<"incidents">;
+        events: Doc<"events">[];
+        session: Doc<"sessions"> | null;
+      }
+    | null
+    | undefined;
   if (timeline === undefined) {
     return (
       <p className="px-3 py-2 text-xs text-muted-foreground">
@@ -278,7 +284,7 @@ function IncidentList({
         hint={
           query
             ? "Try a different title, status, or verdict."
-            : "Ship the vendor upgrade from the Stripe docs page to start the demo."
+            : "Flip the vendor docs to the new contract version to start a demo run."
         }
       />
     );
@@ -540,7 +546,11 @@ function IntegrationHealthCard({
             </div>
             <div>
               <dt className="text-muted-foreground">Monitor</dt>
-              <dd className="text-foreground">watching docs mirror</dd>
+              <dd className="text-foreground">
+                {integration.monitorId
+                  ? "Context.dev monitor active"
+                  : "docs scan (demo mode)"}
+              </dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Test command</dt>
@@ -609,15 +619,11 @@ function LiveFeedCard({ events }: { events: Doc<"events">[] }) {
 function DashboardView({
   overview,
   search,
-  busy,
-  onResetDemo,
 }: {
   overview: NonNullable<Overview>;
   search: string;
-  busy: boolean;
-  onResetDemo: () => void;
 }) {
-  const { product, integrations, incidents, events, sessions } = overview;
+  const { integrations, incidents, events, sessions } = overview;
   const integration = integrations[0];
   const openIncidents = incidents.filter(
     (incident) =>
@@ -632,8 +638,7 @@ function DashboardView({
   const latestIncident = incidents[0];
   const integrationStatus = !integration
     ? { word: "Not configured", dot: "bg-muted-foreground/50" }
-    : latestIncident &&
-        !["not_impacted", "repair_proposed"].includes(latestIncident.status)
+    : latestIncident && isActiveIncident(latestIncident)
       ? {
           word: STATUS_WORD[latestIncident.status],
           dot: INCIDENT_DOT[latestIncident.status],
@@ -662,7 +667,11 @@ function DashboardView({
           value={String(activeSessions.length)}
           hint={`${sessions.length} total`}
         />
-        <StatCard label="Repair PRs" value={String(repairPRs)} hint="never auto-merged" />
+        <StatCard
+          label="Repair PRs"
+          value={String(repairPRs)}
+          hint="never auto-merged"
+        />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -682,41 +691,17 @@ function DashboardView({
           <IncidentList incidents={incidents} search={search} />
         </Card>
       </div>
-
-      <div className="mt-4 flex flex-wrap items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-muted/40 px-4 py-3">
-        <Badge variant="secondary" className="font-normal">
-          Demo
-        </Badge>
-        {integration ? (
-          <Button variant="outline" size="sm" asChild>
-            <a href={integration.docsUrl} target="_blank" rel="noreferrer">
-              Open Stripe docs
-              <ExternalLink aria-hidden className="h-3.5 w-3.5" />
-            </a>
-          </Button>
-        ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={busy}
-          onClick={onResetDemo}
-        >
-          <RefreshCw
-            aria-hidden
-            className={cn("h-3.5 w-3.5", busy && "animate-spin")}
-          />
-          Reset demo
-        </Button>
-      </div>
-
-      <p className="sr-only">{product.name}</p>
     </>
   );
 }
 
 function IntegrationsView({ overview }: { overview: NonNullable<Overview> }) {
-  const { integrations } = overview;
+  const { integrations, incidents } = overview;
+  const unhealthy = new Set(
+    incidents
+      .filter(isActiveIncident)
+      .map((incident) => incident.integrationId),
+  );
   if (integrations.length === 0) {
     return (
       <Card className="gap-0 overflow-hidden py-0">
@@ -725,7 +710,7 @@ function IntegrationsView({ overview }: { overview: NonNullable<Overview> }) {
         </CardHeader>
         <EmptyState
           title="No integrations registered"
-          hint="Integrations are registered through the seed/demo flow."
+          hint="Add an integration by seeding a product with a watched docs URL."
         />
       </Card>
     );
@@ -739,7 +724,14 @@ function IntegrationsView({ overview }: { overview: NonNullable<Overview> }) {
 
             <CardAction className="self-center">
               <Badge variant="secondary" className="gap-1.5 font-normal">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full",
+                    unhealthy.has(integration._id)
+                      ? "bg-red-500"
+                      : "bg-emerald-500",
+                  )}
+                />
                 {integration.provider}
               </Badge>
             </CardAction>
@@ -820,7 +812,12 @@ function SettingsView({
               Currently using the {dark ? "dark" : "light"} theme.
             </p>
           </div>
-          <Button type="button" variant="outline" size="sm" onClick={onToggleTheme}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onToggleTheme}
+          >
             {dark ? (
               <Sun aria-hidden className="h-3.5 w-3.5" />
             ) : (
@@ -859,7 +856,7 @@ function SettingsView({
           {integration ? (
             <Button variant="outline" size="sm" asChild>
               <a href={integration.docsUrl} target="_blank" rel="noreferrer">
-                Open Stripe docs
+                Open vendor docs
                 <ExternalLink aria-hidden className="h-3.5 w-3.5" />
               </a>
             </Button>
@@ -886,7 +883,7 @@ function SettingsView({
 
 // ── App ──────────────────────────────────────────────────────────────────────
 
-export default function Dashboard4() {
+export default function KevinDashboard() {
   const overview: Overview | undefined = useQuery(api.dashboard.overview);
   const resetDemo = useMutation(api.demo.resetDemo);
 
@@ -913,8 +910,14 @@ export default function Dashboard4() {
   }
   if (overview === null) {
     return (
-      <div className="flex h-full min-h-[720px] w-full items-center justify-center bg-background text-sm text-muted-foreground">
-        No product is configured. Run seed:setupProducts.
+      <div className="flex h-full min-h-[720px] w-full items-center justify-center bg-background px-6 text-center text-sm text-muted-foreground">
+        <p>
+          No product configured yet — run{" "}
+          <code className="font-mono text-foreground">
+            npx convex run seed:setupProducts
+          </code>{" "}
+          to get started.
+        </p>
       </div>
     );
   }
@@ -1043,12 +1046,7 @@ export default function Dashboard4() {
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           {view === "dashboard" ? (
-            <DashboardView
-              overview={overview}
-              search={search}
-              busy={busy}
-              onResetDemo={() => void handleReset()}
-            />
+            <DashboardView overview={overview} search={search} />
           ) : view === "incidents" ? (
             <Card className="gap-0 overflow-hidden py-0">
               <CardHeader className={panelHeader}>
